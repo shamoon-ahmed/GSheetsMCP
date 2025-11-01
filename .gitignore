@@ -14,7 +14,7 @@ wheels/
 .venv/
 
 # Secret files
-google_client_secrets.json
+google_client_secret.json
 connections.json
 
 # python version
