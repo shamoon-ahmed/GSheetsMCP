@@ -1,0 +1,21 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# environment variables
+.env
+.venv/
+
+# Secret files
+google_client_secrets.json
+connections.json
+
+# python version
+.python-version

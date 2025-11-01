@@ -1,0 +1,15 @@
+[project]
+name = "gsheetsmcp"
+version = "0.1.0"
+description = "Simple Google Sheets MCP Server for OpenAI Agents"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "fastmcp>=2.12.5",
+    "google-api-python-client>=2.185.0",
+    "google-auth>=2.41.1",
+    "google-auth-oauthlib>=1.2.2",
+    "gspread>=6.2.1",
+    "openai-agents>=0.4.0",
+    "uvicorn[standard]>=0.38.0",
+]
