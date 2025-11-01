@@ -170,21 +170,42 @@ def smart_column_detection(data_row, column_type):
     }
     
     result = {}
+    exact_matches = {}
     
+    # First pass: collect all exact matches (highest priority)
     for key, value in data_row.items():
         clean_key = str(key).strip().lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
         
         for col_type, possible_names in column_mappings.items():
             if column_type == "all" or column_type == col_type:
                 for possible_name in possible_names:
-                    # Use exact match or full word boundary match for better precision
-                    if (clean_key == possible_name or 
-                        clean_key.startswith(possible_name + '_') or
+                    # Exact match - highest priority
+                    if clean_key == possible_name:
+                        if col_type not in exact_matches:  # Take first exact match
+                            exact_matches[col_type] = {"key": key, "value": value, "clean_key": clean_key}
+                        break
+    
+    # Second pass: partial matches only if no exact match found
+    for key, value in data_row.items():
+        clean_key = str(key).strip().lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
+        
+        for col_type, possible_names in column_mappings.items():
+            if column_type == "all" or column_type == col_type:
+                # Skip if we already have an exact match for this column type
+                if col_type in exact_matches:
+                    continue
+                    
+                for possible_name in possible_names:
+                    # Partial match patterns
+                    if (clean_key.startswith(possible_name + '_') or
                         clean_key.endswith('_' + possible_name) or
                         ('_' + possible_name + '_' in clean_key)):
-                        if col_type not in result:  # Take first match
+                        if col_type not in result:  # Take first partial match
                             result[col_type] = {"key": key, "value": value, "clean_key": clean_key}
                         break
+    
+    # Combine exact matches and partial matches
+    result.update(exact_matches)
     
     return result
 
@@ -306,294 +327,6 @@ def get_sheet_data(service, workbook_id, worksheet_name, conn_data=None):
         'data': sheet_data,
         'row_count': len(sheet_data)
     }
-
-@mcp.tool()
-def get_inventory_tool(query: str = "all") -> str:
-    """
-    Get current inventory data from the inventory sheet.
-    Use this to check product availability, stock levels, and product information.
-    """
-    print(f"[DEBUG] Inventory query from agent: {query}")
-    
-    conn = load_connection()
-    if not conn:
-        return json.dumps({"error": "no_connection_configured"})
-    
-    inventory_config = conn.get("inventory")
-    refresh_token = conn.get("refresh_token")
-    
-    if not inventory_config or not refresh_token:
-        return json.dumps({"error": "missing_inventory_config_or_token"})
-    
-    try:
-        service = build_sheets_service_from_refresh(refresh_token)
-        inventory_data = get_sheet_data(
-            service, 
-            inventory_config["workbook_id"], 
-            inventory_config["worksheet_name"]
-        )
-        
-        return json.dumps({
-            "query": query,
-            "inventory": inventory_data,
-            "timestamp": time.time()
-        })
-    except Exception as e:
-        print(f"[ERROR] Failed to get inventory: {e}")
-        return json.dumps({"error": str(e)})
-
-@mcp.tool()
-def get_orders_tool(query: str = "recent") -> str:
-    """
-    Get orders data from the orders sheet.
-    Use this to check recent orders, order history, and order status.
-    """
-    print(f"[DEBUG] Orders query from agent: {query}")
-    
-    conn = load_connection()
-    if not conn:
-        return json.dumps({"error": "no_connection_configured"})
-    
-    orders_config = conn.get("orders")
-    refresh_token = conn.get("refresh_token")
-    
-    if not orders_config or not refresh_token:
-        return json.dumps({"error": "missing_orders_config_or_token"})
-    
-    try:
-        service = build_sheets_service_from_refresh(refresh_token)
-        orders_data = get_sheet_data(
-            service, 
-            orders_config["workbook_id"], 
-            orders_config["worksheet_name"]
-        )
-        
-        return json.dumps({
-            "query": query,
-            "orders": orders_data,
-            "timestamp": time.time()
-        })
-    except Exception as e:
-        print(f"[ERROR] Failed to get orders: {e}")
-        return json.dumps({"error": str(e)})
-
-@mcp.tool()
-def record_order_tool(order_data: str) -> str:
-    """
-    Record a new order in the orders sheet.
-    order_data should be JSON string with order details like:
-    {"customer_name": "John Doe", "product": "Widget A", "quantity": 2, "price": 25.99}
-    """
-    print(f"[DEBUG] Recording order: {order_data}")
-    
-    conn = load_connection()
-    if not conn:
-        return json.dumps({"error": "no_connection_configured"})
-    
-    orders_config = conn.get("orders")
-    refresh_token = conn.get("refresh_token")
-    
-    if not orders_config or not refresh_token:
-        return json.dumps({"error": "missing_orders_config_or_token"})
-    
-    try:
-        # Parse order data
-        try:
-            order = json.loads(order_data)
-        except:
-            return json.dumps({"error": "invalid_order_data_format"})
-        
-        service = build_sheets_service_from_refresh(refresh_token)
-        
-        # Get current orders to understand the structure
-        current_orders = get_sheet_data(
-            service, 
-            orders_config["workbook_id"], 
-            orders_config["worksheet_name"]
-        )
-        
-        # Add timestamp and order ID if not provided
-        if "timestamp" not in order:
-            order["timestamp"] = time.strftime("%Y-%m-%d %H:%M:%S")
-        if "order_id" not in order and "order_no" not in order:
-            order["order_id"] = f"ORD-{int(time.time())}"
-        
-        # Get current orders to understand the structure
-        current_orders = get_sheet_data(
-            service, 
-            orders_config["workbook_id"], 
-            orders_config["worksheet_name"]
-        )
-        
-        headers = current_orders["headers"]
-        
-        # Smart mapping: map order data to existing column structure
-        new_row = []
-        
-        if headers:
-            # Map order fields to existing headers using smart detection
-            for header in headers:
-                clean_header = str(header).strip().lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
-                
-                # Try exact match first
-                if clean_header in order:
-                    new_row.append(str(order[clean_header]))
-                else:
-                    # Try intelligent mapping
-                    mapped_value = ""
-                    
-                    # Map common variations
-                    if any(word in clean_header for word in ["name", "product", "item"]):
-                        mapped_value = order.get("product_name", order.get("customer_name", ""))
-                    elif any(word in clean_header for word in ["quantity", "qty"]):
-                        mapped_value = order.get("quantity", "")
-                    elif any(word in clean_header for word in ["price", "cost", "amount"]):
-                        mapped_value = order.get("price", "")
-                    elif any(word in clean_header for word in ["order", "id", "no"]):
-                        mapped_value = order.get("order_id", order.get("order_no", ""))
-                    elif any(word in clean_header for word in ["customer", "buyer"]):
-                        mapped_value = order.get("customer_name", "")
-                    elif any(word in clean_header for word in ["email", "contact"]):
-                        mapped_value = order.get("customer_email", "")
-                    elif any(word in clean_header for word in ["status", "payment"]):
-                        mapped_value = order.get("status", "confirmed")
-                    elif any(word in clean_header for word in ["size"]):
-                        mapped_value = order.get("size", "")
-                    elif any(word in clean_header for word in ["color", "colour"]):
-                        mapped_value = order.get("color", "")
-                    elif any(word in clean_header for word in ["weight"]):
-                        mapped_value = order.get("weight", "")
-                    elif any(word in clean_header for word in ["date", "time"]):
-                        mapped_value = order.get("timestamp", "")
-                    
-                    new_row.append(str(mapped_value))
-        else:
-            # No existing headers - create them from order data
-            headers = list(order.keys())
-            new_row = [str(v) for v in order.values()]
-            
-            # Add headers first
-            service.spreadsheets().values().append(
-                spreadsheetId=orders_config["workbook_id"],
-                range=f"{orders_config['worksheet_name']}!A1",
-                valueInputOption='RAW',
-                body={'values': [headers]}
-            ).execute()
-        
-        # Add the new order
-        service.spreadsheets().values().append(
-            spreadsheetId=orders_config["workbook_id"],
-            range=f"{orders_config['worksheet_name']}!A:A",
-            valueInputOption='RAW',
-            body={'values': [new_row]}
-        ).execute()
-        
-        return json.dumps({
-            "success": True,
-            "order_id": order.get("order_id"),
-            "message": "Order recorded successfully",
-            "timestamp": time.time()
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to record order: {e}")
-        return json.dumps({"error": str(e)})
-
-@mcp.tool()
-def update_inventory_tool(product_name: str, quantity_change: int) -> str:
-    """
-    Update inventory quantity for a product (e.g., reduce stock after an order).
-    quantity_change can be negative (reduce stock) or positive (add stock).
-    """
-    print(f"[DEBUG] Updating inventory: {product_name}, change: {quantity_change}")
-    
-    conn = load_connection()
-    if not conn:
-        return json.dumps({"error": "no_connection_configured"})
-    
-    inventory_config = conn.get("inventory")
-    refresh_token = conn.get("refresh_token")
-    
-    if not inventory_config or not refresh_token:
-        return json.dumps({"error": "missing_inventory_config_or_token"})
-    
-    try:
-        service = build_sheets_service_from_refresh(refresh_token)
-        
-        # Get current inventory data
-        inventory_data = get_sheet_data(
-            service, 
-            inventory_config["workbook_id"], 
-            inventory_config["worksheet_name"]
-        )
-        
-        # Find the product and update quantity
-        product_found = False
-        row_index = -1
-        quantity_col_index = -1
-        
-        for i, item in enumerate(inventory_data["data"]):
-            # Check if product name matches
-            for key, value in item.items():
-                if "name" in key.lower() or "product" in key.lower():
-                    if product_name.lower() in value.lower():
-                        product_found = True
-                        row_index = i + 2  # +2 because of 0-indexing and header row
-                        
-                        # Find quantity column
-                        for j, header in enumerate(inventory_data["headers"]):
-                            clean_header = header.lower()
-                            if any(word in clean_header for word in ["quantity", "stock", "qty", "available"]):
-                                quantity_col_index = j
-                                break
-                        break
-            if product_found:
-                break
-        
-        if not product_found:
-            return json.dumps({"error": "product_not_found"})
-        
-        if quantity_col_index == -1:
-            return json.dumps({"error": "quantity_column_not_found"})
-        
-        # Get current quantity
-        current_qty_range = f"{inventory_config['worksheet_name']}!{chr(65 + quantity_col_index)}{row_index}"
-        current_qty_result = service.spreadsheets().values().get(
-            spreadsheetId=inventory_config["workbook_id"],
-            range=current_qty_range
-        ).execute()
-        
-        current_qty = 0
-        if current_qty_result.get('values'):
-            try:
-                current_qty = int(float(current_qty_result['values'][0][0]))
-            except:
-                current_qty = 0
-        
-        # Calculate new quantity
-        new_qty = current_qty + quantity_change
-        
-        # Update the cell
-        service.spreadsheets().values().update(
-            spreadsheetId=inventory_config["workbook_id"],
-            range=current_qty_range,
-            valueInputOption='RAW',
-            body={'values': [[new_qty]]}
-        ).execute()
-        
-        return json.dumps({
-            "success": True,
-            "product_name": product_name,
-            "previous_quantity": current_qty,
-            "quantity_change": quantity_change,
-            "new_quantity": new_qty,
-            "message": f"Inventory updated successfully",
-            "timestamp": time.time()
-        })
-        
-    except Exception as e:
-        print(f"[ERROR] Failed to update inventory: {e}")
-        return json.dumps({"error": str(e)})
 
 @mcp.tool()
 def process_customer_order_tool(customer_name: str, product_name: str, quantity: int, customer_email: str = "", notes: str = "", customer_address: str = "", payment_mode: str = "") -> str:
@@ -798,8 +531,8 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
                 inventory_mappings = {
                     "item_name": product_details.get("product_name", product_name),
                     "product_name": product_details.get("product_name", product_name),
+                    "product": product_details.get("product_name", product_name),  # Added for "Product" column
                     "item": product_details.get("product_name", product_name),  # Added for "Item" column
-                    "name": product_details.get("product_name", product_name),
                     "size": product_details.get("size", ""),
                     "color": product_details.get("color", ""),
                     "colour": product_details.get("color", ""),
@@ -815,7 +548,11 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
                 }
                 
                 # Check if this column can be filled from inventory
+                print(f"[DEBUG] Looking for mappings for clean_header: '{clean_header}'")
+                print(f"[DEBUG] Product details: {product_details}")
+                print(f"[DEBUG] Available inventory mappings: {list(inventory_mappings.keys())}")
                 for inv_key, inv_value in inventory_mappings.items():
+                    print(f"[DEBUG] Checking {inv_key} -> {inv_value} (in '{clean_header}': {inv_key in clean_header})")
                     if inv_key in clean_header and inv_value:
                         value = inv_value
                         filled = True
