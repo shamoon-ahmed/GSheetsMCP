@@ -15,7 +15,7 @@ wheels/
 
 # Secret files
 google_client_secret.json
-connections.json
+connection.json
 
 # python version
 .python-version
