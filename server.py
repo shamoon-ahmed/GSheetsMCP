@@ -596,37 +596,6 @@ def update_inventory_tool(product_name: str, quantity_change: int) -> str:
         return json.dumps({"error": str(e)})
 
 @mcp.tool()
-def quick_order_summary_tool(customer_name: str, product_name: str, quantity: int, customer_email: str = "", customer_address: str = "", payment_mode: str = "") -> str:
-    """
-    Quickly generate order summary without processing sheets. Use this to immediately confirm order to customer.
-    """
-    import random
-    import time
-    
-    # Generate Order ID immediately
-    timestamp = int(time.time())
-    random_suffix = ''.join(random.choices('ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789', k=3))
-    order_id = f"ORD-{timestamp}-{random_suffix}"
-    
-    # Return immediate order summary
-    order_summary = {
-        "success": True,
-        "immediate_confirmation": True,
-        "order_id": order_id,
-        "customer_name": customer_name,
-        "product_name": product_name,
-        "quantity": quantity,
-        "customer_email": customer_email,
-        "customer_address": customer_address,
-        "payment_mode": payment_mode,
-        "status": "confirmed",
-        "message": "Order confirmed! Processing in background...",
-        "timestamp": time.time()
-    }
-    
-    return json.dumps(order_summary)
-
-@mcp.tool()
 def process_customer_order_tool(customer_name: str, product_name: str, quantity: int, customer_email: str = "", notes: str = "", customer_address: str = "", payment_mode: str = "") -> str:
     """
     Complete end-to-end order processing with dynamic schema analysis.
@@ -640,15 +609,24 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
     current_time = time.time()
     order_key = f"{customer_name}_{product_name}_{quantity}_{customer_email}_{customer_address}"
     
+    logger.debug(f"Order key: {order_key}")
+    
     # Check if we've processed this exact order in the last 30 seconds
     if not hasattr(process_customer_order_tool, '_recent_orders'):
         process_customer_order_tool._recent_orders = {}
+        logger.debug("Initialized recent orders cache")
     
     # Clean old orders (older than 30 seconds)
+    old_count = len(process_customer_order_tool._recent_orders)
     process_customer_order_tool._recent_orders = {
         k: v for k, v in process_customer_order_tool._recent_orders.items() 
         if current_time - v < 30
     }
+    new_count = len(process_customer_order_tool._recent_orders)
+    if old_count != new_count:
+        logger.debug(f"Cleaned {old_count - new_count} old orders from cache")
+    
+    logger.debug(f"Recent orders in cache: {list(process_customer_order_tool._recent_orders.keys())}")
     
     if order_key in process_customer_order_tool._recent_orders:
         logger.warning(f"Duplicate order detected within 30 seconds - skipping: {order_key}")
@@ -659,6 +637,7 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
         })
     
     # Record this order
+    logger.info(f"Processing new order: {order_key}")
     process_customer_order_tool._recent_orders[order_key] = current_time
     
     conn = load_connection()
@@ -953,17 +932,39 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
         
         print(f"[DEBUG] Order appended successfully: {append_result}")
         
+        # Create a beautiful order summary for the customer
+        total_price = float(product_details.get("price", 0)) * quantity
+        
+        order_summary = f"""✅ Order Confirmed!
+
+📋 Order Summary:
+• Order ID: {customer_provided_data["order_id"]}
+• Product: {product_details.get("product_name", product_name)}
+• Quantity: {quantity}
+• Price: PKR {product_details.get("price", "N/A")} each
+• Total: PKR {total_price:,.0f}
+
+👤 Customer Details:
+• Name: {customer_name}
+• Email: {customer_provided_data.get("customer_email", "Not provided")}
+• Address: {customer_provided_data.get("address", "Not provided")}
+• Payment: {customer_provided_data.get("payment_mode", "Not specified")}
+
+📦 Status: Processing now!
+Your order has been placed and inventory updated. Thank you for your purchase!"""
+
         return json.dumps({
             "success": True,
-            "message": f"Order processed successfully for {customer_name}",
+            "message": "Order processed successfully",
+            "order_summary": order_summary,
             "order_details": {
                 "order_id": customer_provided_data["order_id"],
                 "customer_name": customer_name,
                 "product_name": product_details.get("product_name", product_name),
                 "quantity": quantity,
+                "total_price": total_price,
                 "previous_stock": available_quantity,
                 "new_stock": new_quantity,
-                "columns_filled": len(orders_headers),
                 "complete_order_data": dict(zip(orders_headers, order_row_data))
             },
             "timestamp": time.time()

@@ -76,6 +76,21 @@ def setup():
     ord_choice = int(input(f"7. Choose ORDERS worksheet (1-{len(worksheets)}): "))
     orders_name = worksheets[ord_choice - 1]['properties']['title']
     
+    # Check if there's an existing connection.json with a valid refresh token
+    existing_refresh_token = None
+    if os.path.exists("connection.json"):
+        try:
+            with open("connection.json", "r") as f:
+                existing_config = json.load(f)
+                existing_refresh_token = existing_config.get("refresh_token")
+            if existing_refresh_token:
+                print("💡 Found existing refresh token - will preserve it")
+        except:
+            pass
+    
+    # Use existing refresh token if available, otherwise use new one
+    refresh_token = existing_refresh_token if existing_refresh_token else credentials.refresh_token
+    
     # Save connection.json
     config = {
         "inventory": {
@@ -86,7 +101,7 @@ def setup():
             "workbook_id": sheet_id,
             "worksheet_name": orders_name
         },
-        "refresh_token": credentials.refresh_token,
+        "refresh_token": refresh_token,
         "spreadsheet_name": selected['name']
     }
     
