@@ -3,7 +3,8 @@
 ## LATEST VERSION. 2
 ## This version works with skincare, wardrobe, food business sheets. 
 ## Right now it just takes one item order at a time
-## Order update or delete is not implemented yet.
+## Order update or delete is implemented now.
+## Lacks multiple item/products at once order
 
 [![Python 3.13+](https://img.shields.io/badge/python-3.13+-blue.svg)](https://www.python.org/downloads/)
 [![FastMCP](https://img.shields.io/badge/FastMCP-2.12.5+-green.svg)](https://pypi.org/project/fastmcp/)
