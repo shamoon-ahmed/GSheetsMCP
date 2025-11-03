@@ -18,7 +18,7 @@ def setup():
     
     print("1. Opening browser for Google authorization...")
     
-    # OAuth flow
+    # OAuth flow with console fallback for better compatibility
     flow = InstalledAppFlow.from_client_secrets_file(
         "google_client_secret.json",
         scopes=[
@@ -27,7 +27,16 @@ def setup():
         ]
     )
     
-    credentials = flow.run_local_server(port=8080)
+    # Configure flow for offline access to get refresh token
+    flow.redirect_uri = 'http://localhost:8080/'
+    
+    # Try local server first, fallback to console if fails
+    try:
+        credentials = flow.run_local_server(port=8080, open_browser=True, access_type='offline', prompt='consent')
+    except Exception as e:
+        print(f"⚠️ Local server failed: {e}")
+        print("🔧 Falling back to console authorization...")
+        credentials = flow.run_console()
     print("✅ Authorization successful!")
     
     # Connect to Google APIs
@@ -76,20 +85,12 @@ def setup():
     ord_choice = int(input(f"7. Choose ORDERS worksheet (1-{len(worksheets)}): "))
     orders_name = worksheets[ord_choice - 1]['properties']['title']
     
-    # Check if there's an existing connection.json with a valid refresh token
-    existing_refresh_token = None
-    if os.path.exists("connection.json"):
-        try:
-            with open("connection.json", "r") as f:
-                existing_config = json.load(f)
-                existing_refresh_token = existing_config.get("refresh_token")
-            if existing_refresh_token:
-                print("💡 Found existing refresh token - will preserve it")
-        except:
-            pass
-    
-    # Use existing refresh token if available, otherwise use new one
-    refresh_token = existing_refresh_token if existing_refresh_token else credentials.refresh_token
+    # Always use the new refresh token from the OAuth flow
+    refresh_token = credentials.refresh_token
+    if refresh_token:
+        print("💡 Successfully captured new refresh token")
+    else:
+        print("⚠️ Warning: No refresh token received from OAuth flow")
     
     # Save connection.json
     config = {
