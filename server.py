@@ -336,6 +336,7 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
     Complete end-to-end order processing with dynamic schema analysis.
     Automatically detects orders sheet columns and fills them with inventory data or provided customer data.
     Returns detailed info about what customer information is still needed.
+    Processes single product/item orders
     """
     logger.info(f"Dynamic order processing: {customer_name} wants {quantity}x {product_name}")
     
@@ -758,7 +759,7 @@ def google_sheets_query_tool(query: str) -> str:
 @mcp.tool()
 def update_customer_order_tool(order_id: str, new_product_name: str = "", new_quantity: int = None, new_customer_name: str = "", new_customer_email: str = "", new_customer_address: str = "", new_payment_mode: str = "") -> str:
     """
-    Update an existing customer order by ORDER ID with intelligent inventory synchronization.
+    Update an existing customer order by ORDER ID with intelligent inventory synchronization. (For single product/item orders)
     - Updates order details in orders sheet
     - Handles PRODUCT CHANGES: Restores old product stock + deducts new product stock
     - Handles QUANTITY CHANGES: Automatically adjusts inventory based on differences
@@ -814,7 +815,23 @@ def update_customer_order_tool(order_id: str, new_product_name: str = "", new_qu
         
         # Step 3: Get current order details
         current_product_name = current_order_data.get("product_name", {}).get("value", "")
-        current_quantity = int(current_order_data.get("quantity", {}).get("value", 0))
+        quantity_value = current_order_data.get("quantity", {}).get("value", "0")
+        
+        # Check if this is a multiple products order (contains commas)
+        if "," in str(quantity_value) or "," in current_product_name:
+            return json.dumps({
+                "success": False,
+                "error": "multiple_products_order_detected",
+                "message": f"Order {order_id} contains multiple products. Please use update_multiple_products_order_tool() instead of update_customer_order_tool().",
+                "suggested_tool": "update_multiple_products_order_tool",
+                "order_details": {
+                    "order_id": order_id,
+                    "products": current_product_name,
+                    "quantities": quantity_value
+                }
+            })
+        
+        current_quantity = int(quantity_value)
         
         print(f"[DEBUG] Found order {order_id}: {current_product_name} x{current_quantity}")
         
@@ -1109,7 +1126,7 @@ def update_customer_order_tool(order_id: str, new_product_name: str = "", new_qu
 @mcp.tool()
 def cancel_customer_order_tool(order_id: str) -> str:
     """
-    Cancel an existing customer order by ORDER ID and restore inventory.
+    Cancel an existing customer order by ORDER ID and restore inventory. For single item/product orders.
     - Marks order status as 'Cancelled' instead of deleting the row
     - Restores full quantity back to inventory
     - Preserves order history for business records and analytics
@@ -1303,6 +1320,960 @@ def cancel_customer_order_tool(order_id: str) -> str:
             "details": str(e)
         })
 
+@mcp.tool()
+def process_multiple_products_order_tool(customer_name: str, products_list: str, customer_email: str = "", notes: str = "", customer_address: str = "", payment_mode: str = "") -> str:
+    """
+    Process customer orders with MULTIPLE products/items at once in a single order.
+    Perfect for real-world scenarios: food orders (pizza+fries+coke), skincare bundles, wardrobe combinations, etc.
+    
+    Products format: "Product1:Quantity1,Product2:Quantity2,Product3:Quantity3"
+    Example: "Pizza:2,Fries:1,Coke:3" or "Face Wash:1,Moisturizer:2,Sunscreen:1"
+    
+    Features:
+    - Single order ID for all products
+    - Consolidated inventory management 
+    - Dynamic business type support (inventory vs service businesses)
+    - Intelligent error handling per product
+    - Beautiful order summary with total calculation
+    """
+    logger.info(f"Multiple products order: {customer_name} wants {products_list}")
+    
+    # Order deduplication for multiple products
+    current_time = time.time()
+    order_key = f"{customer_name}_{products_list}_{customer_email}_{customer_address}"
+    
+    # Check for recent duplicate orders
+    if not hasattr(process_multiple_products_order_tool, '_recent_orders'):
+        process_multiple_products_order_tool._recent_orders = {}
+    
+    # Clean old orders (older than 30 seconds)
+    process_multiple_products_order_tool._recent_orders = {
+        k: v for k, v in process_multiple_products_order_tool._recent_orders.items() 
+        if current_time - v < 30
+    }
+    
+    if order_key in process_multiple_products_order_tool._recent_orders:
+        logger.warning(f"Duplicate multiple products order detected - skipping: {order_key}")
+        return json.dumps({
+            "success": True, 
+            "message": "Order already processed",
+            "duplicate_prevention": True
+        })
+    
+    # Record this order
+    process_multiple_products_order_tool._recent_orders[order_key] = current_time
+    
+    conn = load_connection()
+    if not conn:
+        return json.dumps({"success": False, "error": "no_connection_configured"})
+    
+    inventory_config = conn.get("inventory")
+    orders_config = conn.get("orders")
+    refresh_token = conn.get("refresh_token")
+    
+    if not all([inventory_config, orders_config, refresh_token]):
+        return json.dumps({"success": False, "error": "missing_configuration"})
+    
+    try:
+        # Parse products list: "Pizza:2,Fries:1,Coke:3"
+        products_data = []
+        try:
+            for item in products_list.split(','):
+                if ':' in item:
+                    product, qty = item.strip().split(':', 1)
+                    products_data.append({
+                        "name": product.strip(),
+                        "quantity": int(qty.strip())
+                    })
+                else:
+                    return json.dumps({
+                        "success": False,
+                        "error": "invalid_format",
+                        "message": "Products format should be 'Product1:Quantity1,Product2:Quantity2'. Example: 'Pizza:2,Fries:1'"
+                    })
+        except ValueError as e:
+            return json.dumps({
+                "success": False,
+                "error": "parsing_error", 
+                "message": f"Error parsing products list: {str(e)}. Use format 'Product1:Quantity1,Product2:Quantity2'"
+            })
+        
+        if not products_data:
+            return json.dumps({
+                "success": False,
+                "error": "empty_products",
+                "message": "No products specified"
+            })
+        
+        print(f"[DEBUG] Parsed products: {products_data}")
+        
+        # Single Google Sheets service connection
+        service = build_sheets_service_from_refresh(refresh_token)
+        
+        # Get inventory data once
+        inventory_data = get_sheet_data(
+            service, 
+            inventory_config["workbook_id"], 
+            inventory_config["worksheet_name"],
+            conn
+        )
+        
+        # Get orders sheet schema
+        orders_data = get_sheet_data(
+            service,
+            orders_config["workbook_id"],
+            orders_config["worksheet_name"],
+            conn
+        )
+        orders_headers = orders_data["headers"]
+        
+        # Check if inventory has quantity tracking
+        inventory_headers = inventory_data["headers"]
+        has_quantity_column = any("quantity" in header.lower() or "stock" in header.lower() or "available" in header.lower() for header in inventory_headers)
+        print(f"[DEBUG] Inventory has quantity tracking: {has_quantity_column}")
+        
+        # Step 1: Validate ALL products first (fail fast if any product unavailable)
+        validated_products = []
+        total_order_amount = 0
+        products_summary = []
+        
+        for product_item in products_data:
+            product_name = product_item["name"]
+            quantity = product_item["quantity"]
+            
+            # Find product in inventory
+            product_found = False
+            product_details = {}
+            
+            for idx, item in enumerate(inventory_data["data"]):
+                detected_cols = smart_column_detection(item, "all")
+                
+                if "product_name" in detected_cols:
+                    inventory_product_name = detected_cols["product_name"]["value"]
+                    if product_name.lower() in inventory_product_name.lower():
+                        product_found = True
+                        
+                        # Extract all product details
+                        product_details = {
+                            "inventory_name": inventory_product_name,
+                            "price": detected_cols.get("price", {}).get("value", ""),
+                            "category": detected_cols.get("category", {}).get("value", ""),
+                            "size": detected_cols.get("size", {}).get("value", ""),
+                            "color": detected_cols.get("color", {}).get("value", ""),
+                            "weight": detected_cols.get("weight", {}).get("value", ""),
+                            "description": detected_cols.get("description", {}).get("value", ""),
+                            "row_index": idx + 2  # For later inventory update
+                        }
+                        
+                        # Check availability (with safe integer conversion)
+                        if has_quantity_column and "quantity" in detected_cols:
+                            quantity_value = detected_cols["quantity"]["value"] or "0"
+                            try:
+                                available_stock = int(quantity_value)
+                                has_numeric_inventory = True
+                            except (ValueError, TypeError):
+                                # Non-numeric inventory - treat as unlimited (service business)
+                                available_stock = 999999
+                                has_numeric_inventory = False
+                                print(f"[DEBUG] Non-numeric inventory '{quantity_value}' for {product_name} - treating as service business")
+                            
+                            if has_numeric_inventory and available_stock < quantity:
+                                return json.dumps({
+                                    "success": False,
+                                    "error": "insufficient_stock",
+                                    "message": f"Product '{product_name}' has only {available_stock} units available, but {quantity} requested.",
+                                    "product": product_name,
+                                    "available": available_stock,
+                                    "requested": quantity
+                                })
+                            
+                            product_details["available_stock"] = available_stock
+                            product_details["has_numeric_inventory"] = has_numeric_inventory
+                        else:
+                            # No quantity tracking - service business
+                            product_details["available_stock"] = 999999
+                            product_details["has_numeric_inventory"] = False
+                        
+                        # Calculate price
+                        try:
+                            price_str = str(product_details.get("price", ""))
+                            price_numeric = ''.join(c for c in price_str if c.isdigit() or c == '.')
+                            if price_numeric:
+                                unit_price = float(price_numeric)
+                                item_total = unit_price * quantity
+                                total_order_amount += item_total
+                                product_details["unit_price"] = unit_price
+                                product_details["item_total"] = item_total
+                        except:
+                            product_details["unit_price"] = 0
+                            product_details["item_total"] = 0
+                        
+                        break
+            
+            if not product_found:
+                return json.dumps({
+                    "success": False,
+                    "error": "product_not_found",
+                    "message": f"Product '{product_name}' not found in inventory",
+                    "product": product_name
+                })
+            
+            # Add to validated products
+            validated_products.append({
+                "name": product_name,
+                "quantity": quantity,
+                "details": product_details
+            })
+            
+            # Add to summary
+            products_summary.append(f"• {product_details['inventory_name']}: {quantity} × PKR {product_details.get('unit_price', 0)} = PKR {product_details.get('item_total', 0)}")
+        
+        print(f"[DEBUG] All {len(validated_products)} products validated successfully")
+        print(f"[DEBUG] Total order amount: PKR {total_order_amount}")
+        
+        # Step 2: Generate order ID and prepare customer data
+        order_id = f"ORD-{int(time.time())}"
+        
+        # Create consolidated products strings for storage
+        products_names_list = [p["details"]["inventory_name"] for p in validated_products]
+        quantities_list = [str(p["quantity"]) for p in validated_products]
+        
+        products_names_str = ",".join(products_names_list)
+        quantities_str = ",".join(quantities_list)
+        
+        print(f"[DEBUG] Consolidated data:")
+        print(f"[DEBUG]   Products: {products_names_str}")
+        print(f"[DEBUG]   Quantities: {quantities_str}")
+        
+        # Step 3: Update inventory for all products
+        inventory_updates = []
+        for product in validated_products:
+            product_details = product["details"]
+            
+            if product_details.get("has_numeric_inventory", False):
+                old_stock = product_details["available_stock"]
+                new_stock = old_stock - product["quantity"]
+                row_index = product_details["row_index"]
+                
+                # Find quantity column
+                quantity_col = None
+                for col_letter, header in enumerate(inventory_data["headers"], start=1):
+                    if any(word in header.lower() for word in ["quantity", "qty", "stock"]):
+                        quantity_col = chr(64 + col_letter)
+                        break
+                
+                if quantity_col and row_index > 0:
+                    range_name = f"{inventory_config['worksheet_name']}!{quantity_col}{row_index}"
+                    service.spreadsheets().values().update(
+                        spreadsheetId=inventory_config["workbook_id"],
+                        range=range_name,
+                        valueInputOption="RAW",
+                        body={"values": [[str(new_stock)]]}
+                    ).execute()
+                    
+                    inventory_updates.append(f"{product['name']}: {old_stock} → {new_stock}")
+                    print(f"[DEBUG] Updated inventory: {product['name']} {old_stock} → {new_stock}")
+            else:
+                print(f"[DEBUG] Skipping inventory update for service business: {product['name']}")
+        
+        # Step 4: Dynamic order row creation with consolidated data
+        customer_provided_data = {
+            "customer_name": customer_name,
+            "customer_email": customer_email,
+            "customer_address": customer_address,
+            "payment_mode": payment_mode,
+            "notes": notes,
+            "status": "Pending",
+            "order_id": order_id,
+            "products": products_names_str,  # Consolidated products
+            "quantities": quantities_str,    # Consolidated quantities  
+            "total_amount": str(total_order_amount)
+        }
+        
+        # Build order row using smart column detection
+        order_row_data = []
+        for header in orders_headers:
+            clean_header = header.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+            value = ""
+            
+            # Map consolidated multiple products data
+            if any(term in clean_header for term in ["product", "item", "name"]) and "customer" not in clean_header:
+                value = products_names_str
+            elif any(term in clean_header for term in ["weight"]):
+                # Combine weights from all products
+                weights_list = []
+                for product in validated_products:
+                    product_weight = product["details"].get("weight", "")
+                    weights_list.append(product_weight if product_weight else "")
+                value = ",".join(weights_list)
+            elif any(term in clean_header for term in ["quantity", "qty"]):
+                value = quantities_str
+            elif any(term in clean_header for term in ["total", "amount", "price"]) and not any(term in clean_header for term in ["unit", "each"]):
+                value = str(total_order_amount)
+            elif any(term in clean_header for term in ["customer_name", "customer"]) and "email" not in clean_header:
+                value = customer_name
+            elif any(term in clean_header for term in ["email"]) and "customer" not in clean_header:
+                value = customer_email
+            elif any(term in clean_header for term in ["customer_email", "customer_email"]):
+                value = customer_email
+            elif any(term in clean_header for term in ["address", "delivery"]):
+                value = customer_address
+            elif any(term in clean_header for term in ["payment", "mode"]):
+                value = payment_mode
+            elif any(term in clean_header for term in ["notes", "note"]):
+                value = notes
+            elif any(term in clean_header for term in ["status"]):
+                value = "Pending"
+            elif any(term in clean_header for term in ["order_id", "order_no", "order"]):
+                value = order_id
+            
+            order_row_data.append(value)
+            print(f"[DEBUG] Column '{header}': '{value}'")
+        
+        # Step 5: Add order to orders sheet
+        orders_table_structure = orders_config.get("table_structure", {})
+        start_col = orders_table_structure.get("start_col", 0)
+        headers = orders_table_structure.get("headers", [])
+        
+        if len(headers) == 0:
+            append_range = f"{orders_config['worksheet_name']}!A:Z"
+        else:
+            start_col_letter = chr(65 + start_col)
+            end_col_letter = chr(65 + start_col + len(headers) - 1)
+            append_range = f"{orders_config['worksheet_name']}!{start_col_letter}:{end_col_letter}"
+        
+        append_result = service.spreadsheets().values().append(
+            spreadsheetId=orders_config["workbook_id"],
+            range=append_range,
+            valueInputOption="RAW",
+            insertDataOption="INSERT_ROWS",
+            body={"values": [order_row_data]}
+        ).execute()
+        
+        print(f"[DEBUG] Multiple products order added successfully")
+        
+        # Step 6: Create beautiful order summary
+        products_summary_str = "\n".join(products_summary)
+        
+        order_summary = f"""✅ MULTIPLE PRODUCTS ORDER CONFIRMED!
+
+📋 Order Summary:
+• Order ID: {order_id}
+• Customer: {customer_name}
+• Products Ordered:
+{products_summary_str}
+
+💰 Total Amount: PKR {total_order_amount:,.0f}
+
+👤 Customer Details:
+• Email: {customer_email or "Not provided"}
+• Address: {customer_address or "Not provided"}  
+• Payment: {payment_mode or "Not specified"}
+
+📦 Status: Processing now!
+Your multiple products order has been placed and inventory updated. Thank you for your purchase!"""
+
+        return json.dumps({
+            "success": True,
+            "message": f"Multiple products order processed successfully - {len(validated_products)} items",
+            "order_summary": order_summary,
+            "order_details": {
+                "order_id": order_id,
+                "customer_name": customer_name,
+                "products_count": len(validated_products),
+                "products": products_names_str,
+                "quantities": quantities_str,
+                "total_amount": total_order_amount,
+                "inventory_updates": inventory_updates,
+                "complete_order_data": dict(zip(orders_headers, order_row_data))
+            },
+            "timestamp": time.time()
+        })
+        
+    except Exception as e:
+        logger.error(f"Multiple products order processing failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "processing_failed",
+            "details": str(e)
+        })
+
+@mcp.tool()
+def update_multiple_products_order_tool(order_id: str, new_products_list: str = "", new_customer_name: str = "", new_customer_email: str = "", new_customer_address: str = "", new_payment_mode: str = "") -> str:
+    """
+    Update an existing multiple products order by ORDER ID with intelligent inventory synchronization.
+    - Handles complete product list changes: restores old products + deducts new products
+    - Supports updating customer information (name, email, address, payment mode)
+    - Dynamically works with any business type (inventory vs service businesses)
+    
+    Products format for changes: "Product1:Quantity1,Product2:Quantity2,Product3:Quantity3"
+    Example: "Pizza:3,Burger:1,Coke:2" (replaces entire order with new products)
+    """
+    logger.info(f"Updating multiple products order: {order_id}")
+    
+    conn = load_connection()
+    if not conn:
+        return json.dumps({"success": False, "error": "no_connection_configured"})
+    
+    inventory_config = conn.get("inventory")
+    orders_config = conn.get("orders")
+    refresh_token = conn.get("refresh_token")
+    
+    if not all([inventory_config, orders_config, refresh_token]):
+        return json.dumps({"success": False, "error": "missing_configuration"})
+    
+    try:
+        service = build_sheets_service_from_refresh(refresh_token)
+        
+        # Step 1: Find the order
+        orders_data = get_sheet_data(
+            service, 
+            orders_config["workbook_id"], 
+            orders_config["worksheet_name"],
+            conn
+        )
+        
+        order_found = False
+        order_row_index = -1
+        current_order_data = {}
+        
+        for idx, order in enumerate(orders_data["data"]):
+            detected_cols = smart_column_detection(order, "all")
+            if "id" in detected_cols and detected_cols["id"]["value"] == order_id:
+                order_found = True
+                order_row_index = idx + 2
+                current_order_data = detected_cols
+                break
+        
+        if not order_found:
+            return json.dumps({
+                "success": False,
+                "error": "order_not_found",
+                "message": f"Order {order_id} not found"
+            })
+        
+        # Step 2: Parse current order products
+        current_products_str = current_order_data.get("product_name", {}).get("value", "")
+        current_quantities_str = current_order_data.get("quantity", {}).get("value", "")
+        
+        print(f"[DEBUG] Current order products: {current_products_str}")
+        print(f"[DEBUG] Current order quantities: {current_quantities_str}")
+        
+        # Parse current products for inventory restoration
+        current_products = []
+        if current_products_str and current_quantities_str:
+            product_names = current_products_str.split(',')
+            quantities = current_quantities_str.split(',')
+            
+            for i, product_name in enumerate(product_names):
+                if i < len(quantities):
+                    try:
+                        qty = int(quantities[i].strip())
+                        current_products.append({
+                            "name": product_name.strip(),
+                            "quantity": qty
+                        })
+                    except ValueError:
+                        continue
+        
+        # Step 3: If new products list provided, handle product changes
+        if new_products_list:
+            # Parse new products
+            try:
+                new_products = []
+                for item in new_products_list.split(','):
+                    if ':' in item:
+                        product, qty = item.strip().split(':', 1)
+                        new_products.append({
+                            "name": product.strip(),
+                            "quantity": int(qty.strip())
+                        })
+            except ValueError as e:
+                return json.dumps({
+                    "success": False,
+                    "error": "parsing_error",
+                    "message": f"Error parsing new products list: {str(e)}"
+                })
+            
+            # Get inventory data
+            inventory_data = get_sheet_data(
+                service, 
+                inventory_config["workbook_id"], 
+                inventory_config["worksheet_name"],
+                conn
+            )
+            
+            # Step 4: Smart inventory management - only process differences
+            # Compare old vs new products to identify what actually changed
+            old_product_dict = {p["name"].lower(): p["quantity"] for p in current_products}
+            new_product_dict = {p["name"].lower(): p["quantity"] for p in new_products}
+            
+            print(f"[DEBUG] Old products: {old_product_dict}")
+            print(f"[DEBUG] New products: {new_product_dict}")
+            
+            # Products to restore (only those removed or with reduced quantities)
+            products_to_restore = []
+            for old_name, old_qty in old_product_dict.items():
+                if old_name not in new_product_dict:
+                    # Product completely removed - restore full quantity
+                    products_to_restore.append({"name": old_name, "quantity": old_qty, "reason": "removed"})
+                elif new_product_dict[old_name] < old_qty:
+                    # Product quantity reduced - restore the difference
+                    qty_difference = old_qty - new_product_dict[old_name]
+                    products_to_restore.append({"name": old_name, "quantity": qty_difference, "reason": "reduced"})
+            
+            # Products to deduct (only those added or with increased quantities)
+            products_to_deduct = []
+            for new_name, new_qty in new_product_dict.items():
+                if new_name not in old_product_dict:
+                    # Product completely new - deduct full quantity
+                    products_to_deduct.append({"name": new_name, "quantity": new_qty, "reason": "added"})
+                elif new_qty > old_product_dict[new_name]:
+                    # Product quantity increased - deduct the difference
+                    qty_difference = new_qty - old_product_dict[new_name]
+                    products_to_deduct.append({"name": new_name, "quantity": qty_difference, "reason": "increased"})
+            
+            print(f"[DEBUG] Products to restore: {products_to_restore}")
+            print(f"[DEBUG] Products to deduct: {products_to_deduct}")
+            
+            # Step 5: Restore inventory for products that need restoration
+            for restore_item in products_to_restore:
+                product_name = restore_item["name"]
+                quantity_to_restore = restore_item["quantity"]
+                
+                for idx, item in enumerate(inventory_data["data"]):
+                    detected_cols = smart_column_detection(item, "all")
+                    if "product_name" in detected_cols:
+                        if product_name.lower() in detected_cols["product_name"]["value"].lower():
+                            # Safe integer conversion for restoration
+                            quantity_value = detected_cols.get("quantity", {}).get("value", "0")
+                            try:
+                                current_stock = int(quantity_value)
+                                has_numeric_inventory = True
+                            except (ValueError, TypeError):
+                                has_numeric_inventory = False
+                                print(f"[DEBUG] Non-numeric inventory for restoration: {product_name}")
+                            
+                            if has_numeric_inventory:
+                                restored_stock = current_stock + quantity_to_restore
+                                
+                                # Update inventory
+                                product_row_index = idx + 2
+                                quantity_col = None
+                                for col_letter, header in enumerate(inventory_data["headers"], start=1):
+                                    if any(word in header.lower() for word in ["quantity", "qty", "stock"]):
+                                        quantity_col = chr(64 + col_letter)
+                                        break
+                                
+                                if quantity_col:
+                                    range_name = f"{inventory_config['worksheet_name']}!{quantity_col}{product_row_index}"
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=inventory_config["workbook_id"],
+                                        range=range_name,
+                                        valueInputOption="RAW",
+                                        body={"values": [[str(restored_stock)]]}
+                                    ).execute()
+                                    print(f"[DEBUG] Restored {restore_item['reason']} product: {product_name} +{quantity_to_restore} ({current_stock} → {restored_stock})")
+                            break
+            
+            # Step 6: Validate and deduct inventory for products that need deduction
+            validated_new_products = []
+            total_new_amount = 0
+            
+            for deduct_item in products_to_deduct:
+                product_name = deduct_item["name"]
+                quantity_to_deduct = deduct_item["quantity"]
+                
+                # Find product in inventory
+                product_found = False
+                for idx, item in enumerate(inventory_data["data"]):
+                    detected_cols = smart_column_detection(item, "all")
+                    if "product_name" in detected_cols:
+                        if product_name.lower() in detected_cols["product_name"]["value"].lower():
+                            product_found = True
+                            
+                            # Check availability
+                            quantity_value = detected_cols.get("quantity", {}).get("value", "0")
+                            try:
+                                available_stock = int(quantity_value)
+                                has_numeric_inventory = True
+                            except (ValueError, TypeError):
+                                available_stock = 999999
+                                has_numeric_inventory = False
+                            
+                            if has_numeric_inventory and available_stock < quantity_to_deduct:
+                                return json.dumps({
+                                    "success": False,
+                                    "error": "insufficient_stock",
+                                    "message": f"Product '{product_name}' has only {available_stock} units available, need {quantity_to_deduct} more"
+                                })
+                            
+                            # Deduct inventory
+                            if has_numeric_inventory:
+                                new_stock = available_stock - quantity_to_deduct
+                                product_row_index = idx + 2
+                                quantity_col = None
+                                for col_letter, header in enumerate(inventory_data["headers"], start=1):
+                                    if any(word in header.lower() for word in ["quantity", "qty", "stock"]):
+                                        quantity_col = chr(64 + col_letter)
+                                        break
+                                
+                                if quantity_col:
+                                    range_name = f"{inventory_config['worksheet_name']}!{quantity_col}{product_row_index}"
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=inventory_config["workbook_id"],
+                                        range=range_name,
+                                        valueInputOption="RAW",
+                                        body={"values": [[str(new_stock)]]}
+                                    ).execute()
+                                    print(f"[DEBUG] Deducted {deduct_item['reason']} product: {product_name} -{quantity_to_deduct} ({available_stock} → {new_stock})")
+                            break
+                
+                if not product_found:
+                    return json.dumps({
+                        "success": False,
+                        "error": "new_product_not_found",
+                        "message": f"Product '{product_name}' not found in inventory"
+                    })
+            
+            # Step 7: Calculate total for all new products and collect product details
+            for new_product in new_products:
+                product_name = new_product["name"]
+                quantity = new_product["quantity"]
+                
+                # Find product details for price calculation
+                for idx, item in enumerate(inventory_data["data"]):
+                    detected_cols = smart_column_detection(item, "all")
+                    if "product_name" in detected_cols:
+                        if product_name.lower() in detected_cols["product_name"]["value"].lower():
+                            # Calculate new total
+                            price_str = str(detected_cols.get("price", {}).get("value", ""))
+                            price_numeric = ''.join(c for c in price_str if c.isdigit() or c == '.')
+                            if price_numeric:
+                                unit_price = float(price_numeric)
+                                total_new_amount += unit_price * quantity
+                            
+                            validated_new_products.append({
+                                "name": detected_cols["product_name"]["value"],
+                                "quantity": quantity,
+                                "weight": detected_cols.get("weight", {}).get("value", "")
+                            })
+                            break
+            
+            # Step 8: Update order with new products
+            new_products_str = ",".join([p["name"] for p in validated_new_products])
+            new_quantities_str = ",".join([str(p["quantity"]) for p in validated_new_products])
+            new_weights_str = ",".join([p.get("weight", "") for p in validated_new_products])
+            
+            # Update order sheet
+            orders_headers = orders_data["headers"]
+            updates_applied = []
+            
+            update_data = {
+                "product": new_products_str,
+                "product_name": new_products_str,
+                "item": new_products_str,
+                "weight": new_weights_str,
+                "quantity": new_quantities_str,
+                "qty": new_quantities_str,
+                "total": str(total_new_amount),
+                "amount": str(total_new_amount)
+            }
+            
+            # Add customer updates if provided
+            if new_customer_name:
+                update_data.update({"customer_name": new_customer_name, "customer": new_customer_name})
+            if new_customer_email:
+                update_data.update({"customer_email": new_customer_email, "email": new_customer_email})
+            if new_customer_address:
+                update_data.update({"customer_address": new_customer_address, "address": new_customer_address})
+            if new_payment_mode:
+                update_data.update({"payment_mode": new_payment_mode, "payment": new_payment_mode})
+            
+            # Apply updates
+            for col_idx, header in enumerate(orders_headers):
+                clean_header = header.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+                
+                for update_key, update_value in update_data.items():
+                    if update_value and (update_key in clean_header or clean_header in update_key):
+                        col_letter = chr(65 + col_idx)
+                        range_name = f"{orders_config['worksheet_name']}!{col_letter}{order_row_index}"
+                        
+                        service.spreadsheets().values().update(
+                            spreadsheetId=orders_config["workbook_id"],
+                            range=range_name,
+                            valueInputOption="RAW",
+                            body={"values": [[update_value]]}
+                        ).execute()
+                        
+                        updates_applied.append(f"{header}: {update_value}")
+                        print(f"[DEBUG] Updated {header}: {update_value}")
+                        break
+            
+            return json.dumps({
+                "success": True,
+                "message": f"Multiple products order {order_id} updated successfully",
+                "order_id": order_id,
+                "products_changed": True,
+                "old_products": f"{len(current_products)} items",
+                "new_products": f"{len(validated_new_products)} items", 
+                "updates_applied": updates_applied,
+                "order_summary": f"""
+📋 MULTIPLE PRODUCTS ORDER UPDATED!
+
+🆔 Order ID: {order_id}
+📦 Products: {current_products_str} → {new_products_str}
+🔢 Quantities: {current_quantities_str} → {new_quantities_str}
+💰 New Total: PKR {total_new_amount:,.0f}
+👤 Customer: {new_customer_name if new_customer_name else 'unchanged'}
+
+✅ Order updated and inventory synchronized for all products!"""
+            })
+        
+        else:
+            # Only customer info updates (no product changes)
+            update_data = {}
+            if new_customer_name:
+                update_data.update({"customer_name": new_customer_name, "customer": new_customer_name})
+            if new_customer_email:
+                update_data.update({"customer_email": new_customer_email, "email": new_customer_email})
+            if new_customer_address:
+                update_data.update({"customer_address": new_customer_address, "address": new_customer_address})
+            if new_payment_mode:
+                update_data.update({"payment_mode": new_payment_mode, "payment": new_payment_mode})
+            
+            # Apply customer updates
+            orders_headers = orders_data["headers"]
+            updates_applied = []
+            
+            for col_idx, header in enumerate(orders_headers):
+                clean_header = header.lower().replace(' ', '_').replace('(', '').replace(')', '').replace('-', '_')
+                
+                for update_key, update_value in update_data.items():
+                    if update_value and (update_key in clean_header or clean_header in update_key):
+                        col_letter = chr(65 + col_idx)
+                        range_name = f"{orders_config['worksheet_name']}!{col_letter}{order_row_index}"
+                        
+                        service.spreadsheets().values().update(
+                            spreadsheetId=orders_config["workbook_id"],
+                            range=range_name,
+                            valueInputOption="RAW",
+                            body={"values": [[update_value]]}
+                        ).execute()
+                        
+                        updates_applied.append(f"{header}: {update_value}")
+                        break
+            
+            return json.dumps({
+                "success": True,
+                "message": f"Order {order_id} customer information updated",
+                "order_id": order_id,
+                "products_changed": False,
+                "updates_applied": updates_applied
+            })
+        
+    except Exception as e:
+        logger.error(f"Multiple products order update failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "update_failed",
+            "details": str(e)
+        })
+
+@mcp.tool()
+def cancel_multiple_products_order_tool(order_id: str) -> str:
+    """
+    Cancel an existing multiple products order by ORDER ID and restore ALL products inventory.
+    - Marks order status as 'Cancelled' instead of deleting
+    - Restores full quantities for ALL products back to inventory
+    - Preserves order history for business records
+    - Works with any business type (inventory vs service businesses)
+    """
+    logger.info(f"Cancelling multiple products order: {order_id}")
+    
+    conn = load_connection()
+    if not conn:
+        return json.dumps({"success": False, "error": "no_connection_configured"})
+    
+    inventory_config = conn.get("inventory")
+    orders_config = conn.get("orders")
+    refresh_token = conn.get("refresh_token")
+    
+    if not all([inventory_config, orders_config, refresh_token]):
+        return json.dumps({"success": False, "error": "missing_configuration"})
+    
+    try:
+        service = build_sheets_service_from_refresh(refresh_token)
+        
+        # Step 1: Find the order
+        orders_data = get_sheet_data(
+            service, 
+            orders_config["workbook_id"], 
+            orders_config["worksheet_name"],
+            conn
+        )
+        
+        order_found = False
+        order_row_index = -1
+        order_details = {}
+        
+        for idx, order in enumerate(orders_data["data"]):
+            detected_cols = smart_column_detection(order, "all")
+            if "id" in detected_cols and detected_cols["id"]["value"] == order_id:
+                order_found = True
+                order_row_index = idx + 2
+                order_details = {
+                    "products": detected_cols.get("product_name", {}).get("value", ""),
+                    "quantities": detected_cols.get("quantity", {}).get("value", ""),
+                    "customer_name": detected_cols.get("customer_name", {}).get("value", ""),
+                    "total": detected_cols.get("price", {}).get("value", ""),
+                    "status": detected_cols.get("status", {}).get("value", "")
+                }
+                break
+        
+        if not order_found:
+            return json.dumps({
+                "success": False,
+                "error": "order_not_found",
+                "message": f"Order {order_id} not found"
+            })
+        
+        # Check current status
+        current_status = order_details["status"].strip()
+        if current_status.lower() == "cancelled":
+            return json.dumps({
+                "success": False,
+                "error": "already_cancelled",
+                "message": f"Order {order_id} is already cancelled"
+            })
+        elif current_status.lower() == "delivered":
+            return json.dumps({
+                "success": False,
+                "error": "cannot_cancel_delivered",
+                "message": f"Order {order_id} has already been delivered and cannot be cancelled"
+            })
+        
+        # Step 2: Parse products to restore
+        products_str = order_details["products"]
+        quantities_str = order_details["quantities"]
+        
+        products_to_restore = []
+        if products_str and quantities_str:
+            product_names = products_str.split(',')
+            quantities = quantities_str.split(',')
+            
+            for i, product_name in enumerate(product_names):
+                if i < len(quantities):
+                    try:
+                        qty = int(quantities[i].strip())
+                        products_to_restore.append({
+                            "name": product_name.strip(),
+                            "quantity": qty
+                        })
+                    except ValueError:
+                        continue
+        
+        print(f"[DEBUG] Products to restore: {products_to_restore}")
+        
+        # Step 3: Restore inventory for all products
+        if products_to_restore:
+            inventory_data = get_sheet_data(
+                service, 
+                inventory_config["workbook_id"], 
+                inventory_config["worksheet_name"],
+                conn
+            )
+            
+            restored_products = []
+            
+            for product_item in products_to_restore:
+                product_name = product_item["name"]
+                quantity_to_restore = product_item["quantity"]
+                
+                # Find product in inventory
+                for idx, item in enumerate(inventory_data["data"]):
+                    detected_cols = smart_column_detection(item, "all")
+                    if "product_name" in detected_cols:
+                        if product_name.lower() in detected_cols["product_name"]["value"].lower():
+                            # Safe integer conversion for cancellation
+                            quantity_value = detected_cols.get("quantity", {}).get("value", "0")
+                            try:
+                                current_stock = int(quantity_value)
+                                has_numeric_inventory = True
+                            except (ValueError, TypeError):
+                                has_numeric_inventory = False
+                                print(f"[DEBUG] Non-numeric inventory for cancellation: {product_name}")
+                            
+                            if has_numeric_inventory:
+                                new_stock = current_stock + quantity_to_restore
+                                
+                                # Update inventory
+                                product_row_index = idx + 2
+                                quantity_col = None
+                                for col_letter, header in enumerate(inventory_data["headers"], start=1):
+                                    if any(word in header.lower() for word in ["quantity", "qty", "stock"]):
+                                        quantity_col = chr(64 + col_letter)
+                                        break
+                                
+                                if quantity_col:
+                                    range_name = f"{inventory_config['worksheet_name']}!{quantity_col}{product_row_index}"
+                                    service.spreadsheets().values().update(
+                                        spreadsheetId=inventory_config["workbook_id"],
+                                        range=range_name,
+                                        valueInputOption="RAW",
+                                        body={"values": [[str(new_stock)]]}
+                                    ).execute()
+                                    
+                                    restored_products.append(f"{product_name}: +{quantity_to_restore}")
+                                    print(f"[DEBUG] Restored inventory: {product_name} {current_stock} → {new_stock}")
+                            break
+        
+        # Step 4: Update order status to 'Cancelled'
+        orders_headers = orders_data["headers"]
+        status_col = None
+        
+        for col_idx, header in enumerate(orders_headers):
+            if "status" in header.lower():
+                status_col = chr(65 + col_idx)
+                break
+        
+        if status_col:
+            range_name = f"{orders_config['worksheet_name']}!{status_col}{order_row_index}"
+            service.spreadsheets().values().update(
+                spreadsheetId=orders_config["workbook_id"],
+                range=range_name,
+                valueInputOption="RAW",
+                body={"values": [["Cancelled"]]}
+            ).execute()
+            print(f"[DEBUG] Order status updated to 'Cancelled'")
+        
+        return json.dumps({
+            "success": True,
+            "message": f"Multiple products order {order_id} cancelled successfully",
+            "order_id": order_id,
+            "cancelled_details": order_details,
+            "products_restored": len(products_to_restore),
+            "inventory_restored": len(restored_products) > 0,
+            "restored_items": restored_products,
+            "order_summary": f"""
+❌ MULTIPLE PRODUCTS ORDER CANCELLED!
+
+🆔 Cancelled Order: {order_id}
+📦 Products: {products_str}
+🔢 Quantities: {quantities_str}
+👤 Customer: {order_details['customer_name']}
+
+✅ Order marked as 'Cancelled' and all {len(products_to_restore)} products restored to inventory!
+📋 Order preserved for business records."""
+        })
+        
+    except Exception as e:
+        logger.error(f"Multiple products order cancellation failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "cancellation_failed",
+            "details": str(e)
+        })
 
 @mcp.tool()
 def say_hello(name: str) -> str:
