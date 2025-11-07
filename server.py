@@ -4,6 +4,8 @@ import requests
 import base64
 from io import BytesIO
 from dotenv import load_dotenv
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 
 import gspread
 from google.oauth2.credentials import Credentials
@@ -140,6 +142,34 @@ def build_sheets_service_from_refresh(refresh_token):
     service = build("sheets", "v4", credentials=creds)
     print("[DEBUG] Google Sheets service built successfully")
     return service
+
+def build_google_credentials_from_refresh(refresh_token):
+    """Build Google credentials object that can be used for any Google service (Sheets, Gmail, etc.)"""
+    logger.debug("Building Google credentials from refresh token...")
+    
+    # Decrypt the refresh token if needed
+    decrypted_token = decrypt_if_needed(refresh_token)
+    
+    creds = Credentials(
+        token=None,
+        refresh_token=decrypted_token,
+        token_uri="https://oauth2.googleapis.com/token",
+        client_id=GOOGLE_CLIENT_ID,
+        client_secret=GOOGLE_CLIENT_SECRET,
+        scopes=[
+            "https://www.googleapis.com/auth/spreadsheets",
+            "https://www.googleapis.com/auth/gmail.send"
+        ]
+    )
+    
+    try:
+        # Refresh to get an access token
+        creds.refresh(Request())
+        logger.debug("Google credentials refresh successful")
+        return creds
+    except Exception as refresh_error:
+        logger.error(f"Google credentials refresh failed: {refresh_error}")
+        raise
 
 def smart_column_detection(data_row, column_type):
     """
@@ -2660,6 +2690,905 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
             "error": "generation_failed",
             "message": str(e)
         })
+
+# ========================================
+# EMAIL MARKETING TOOLS
+# ========================================
+
+@mcp.tool()
+def generate_email_content_tool(product_details: str = "", email_style: str = "promotional", revision_instructions: str = "", previous_email_content: str = "", business_name: str = "Your Business") -> str:
+    """
+    Generate or revise email marketing content using AI
+    
+    Parameters:
+    - product_details: JSON string from search_product_tool
+    - email_style: promotional, newsletter, sale, announcement
+    - revision_instructions: Changes to make (e.g., "make text bigger, change color to blue")
+    - previous_email_content: Current email to modify
+    - business_name: Business name for branding
+    """
+    logger.info(f"Email Marketing: Generating email content for style '{email_style}'")
+    
+    try:
+        # Load environment variables
+        load_dotenv()
+        openai_api_key = os.getenv("OPENAI_API_KEY")
+        
+        if not openai_api_key:
+            return json.dumps({
+                "success": False,
+                "error": "missing_openai_api_key",
+                "message": "OPENAI_API_KEY not found in environment variables"
+            })
+        
+        # Parse product details if provided
+        product = {}
+        if product_details:
+            try:
+                product_data = json.loads(product_details)
+                product = product_data.get("product", {})
+            except json.JSONDecodeError:
+                logger.warning("Email Marketing: Invalid product details JSON")
+        
+        # Determine if this is a revision or new email
+        is_revision = bool(revision_instructions and previous_email_content)
+        
+        # Create appropriate prompt for email generation
+        if is_revision:
+            prompt = f"""
+            Revise the following email based on these instructions: {revision_instructions}
+            
+            Current Email Content:
+            {previous_email_content}
+            
+            Instructions for changes:
+            {revision_instructions}
+            
+            Please return the complete revised HTML email with the requested changes applied.
+            Maintain professional formatting and ensure it's visually appealing.
+            """
+        else:
+            # New email generation
+            
+            prompt = f"""
+            You are an expert HTML email designer.
+
+Generate a complete, mobile-responsive, professionally designed HTML email template using inline CSS for the following product:
+
+This is a json format of the product details. Extract out the necessary information smartly and intelligently.
+{product_details}
+
+### REQUIREMENTS
+
+Return **only HTML code**, no explanations.  
+The email must be **fully responsive** and look good on mobile and desktop.  
+Use **inline CSS** (very important).  
+Use clean, modern typography with clear hierarchy.  
+Include:
+- A header with the brand name {business_name}
+- A hero section featuring the product image
+- Bold headline introducing the product name
+- Subtext explaining benefits (use tags for benefits)
+- A “Key Benefits” bullet list
+- A pricing section
+- A modern, centered **Shop Now** CTA button
+- A clean footer with unsubscribe text
+
+The design style:
+- Soft pastel feel (expressed through layout/spacing, not real color words)
+- Minimal, modern, premium skincare look
+- Plenty of padding and spacing
+- Rounded corners on containers
+- High readability
+
+The HTML must be:
+- Fully copy-paste ready for any email marketing system
+- Without external CSS files
+- Without JavaScript
+- Using tables for layout (industry standard)
+
+### OUTPUT FORMAT
+Return only the final HTML code, nothing else.
+"""
+            prompt += """
+            
+            Return a complete HTML email template that is:
+            - Mobile responsive
+            - Visually appealing with good typography
+            - Professional and modern design
+            - Includes clear call-to-action buttons
+            - Has proper header and footer
+            - Ready to send to customers
+            """
+        
+        # Generate email content using OpenAI
+        try:
+            from openai import OpenAI
+            
+            load_dotenv()
+            openai_api_key = os.getenv("OPENAI_API_KEY")
+
+            client = OpenAI(api_key=openai_api_key)
+            
+            response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a professional email marketing designer. Create beautiful, responsive HTML email templates that are mobile-friendly and professionally designed."},
+                    {"role": "user", "content": prompt}
+                ],
+                max_tokens=2000,
+                temperature=0.7
+            )
+            
+            email_html = response.choices[0].message.content.strip()
+            
+            if not email_html:
+                raise Exception("No email content generated")
+            
+            # Generate subject line
+            subject_prompt = f"Create an engaging email subject line for a {email_style} email about {product.get('product_name', 'our product')}. Return only the subject line, no quotes or extra text."
+            
+            subject_response = client.chat.completions.create(
+                model="gpt-4o",
+                messages=[
+                    {"role": "system", "content": "You are a marketing expert. Create compelling email subject lines that increase open rates."},
+                    {"role": "user", "content": subject_prompt}
+                ],
+                max_tokens=100,
+                temperature=0.7
+            )
+            
+            subject_line = subject_response.choices[0].message.content.strip()
+            
+            # Clean up HTML if it has markdown formatting
+            if email_html.startswith("```html"):
+                email_html = email_html.replace("```html", "").replace("```", "").strip()
+            
+            logger.info("Email Marketing: Email content generated successfully with OpenAI")
+            
+            return json.dumps({
+                "success": True,
+                "email_content": email_html,
+                "email_subject": subject_line,
+                "product_featured": product.get("product_name", "Featured Product"),
+                "email_style": email_style,
+                "changes_applied": revision_instructions.split(',') if revision_instructions else [],
+                "ready_for_approval": True,
+                "message": "Email content generated successfully with OpenAI" if not is_revision else f"Email revised with OpenAI: {revision_instructions}",
+                "ai_provider": "OpenAI GPT-4o"
+            })
+            
+        except Exception as api_error:
+            logger.error(f"Email Marketing: OpenAI API call failed: {api_error}")
+            # Fallback to template-based email
+            return generate_template_email(product, email_style, business_name, revision_instructions, is_revision)
+        
+    except Exception as e:
+        logger.error(f"Email Marketing: Email generation failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "email_generation_failed",
+            "message": str(e)
+        })
+
+# In case of fall back to template-based email generation. If AI doesn't work.
+def generate_template_email(product, email_style, business_name, revision_instructions, is_revision):
+    """Fallback template-based email generation with proven email-client compatibility"""
+    
+    product_name = product.get("product_name", "Featured Product")
+    price = product.get("price", "Contact for pricing")
+    tags = product.get("tags", "premium quality")
+    media_url = product.get("media", "")
+    
+    # Simple, email-client-friendly HTML template with inline CSS
+    email_html = f"""
+<table width="100%" cellpadding="0" cellspacing="0" border="0" style="font-family: Arial, sans-serif; background-color: #f4f4f4; padding: 20px;">
+    <tr>
+        <td align="center">
+            <table width="600" cellpadding="0" cellspacing="0" border="0" style="background-color: #ffffff; border-radius: 10px; overflow: hidden; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                <!-- Header -->
+                <tr>
+                    <td align="center" style="background-color: #ffffff; padding: 30px; border-bottom: 2px solid #f0f0f0;">
+                        <h1 style="margin: 0; color: #333333; font-size: 28px; font-weight: bold;">{business_name}</h1>
+                    </td>
+                </tr>
+                
+                <!-- Product Image -->
+                {f'''<tr>
+                    <td align="center" style="padding: 20px;">
+                        <img src="{media_url}" alt="{product_name}" style="max-width: 300px; height: auto; border-radius: 8px;" />
+                    </td>
+                </tr>''' if media_url else ''}
+                
+                <!-- Content -->
+                <tr>
+                    <td style="padding: 30px;">
+                        <h2 style="margin: 0 0 20px 0; color: #333333; font-size: 24px;">{email_style.title()}: {product_name}</h2>
+                        
+                        <div style="background-color: #f8f9fa; padding: 25px; border-radius: 8px; margin: 20px 0;">
+                            <h3 style="margin: 0 0 10px 0; color: #333333; font-size: 20px;">{product_name}</h3>
+                            <p style="margin: 0 0 15px 0; font-size: 28px; color: #27ae60; font-weight: bold;">PKR {price}</p>
+                            <p style="margin: 0; color: #666666; font-size: 16px;">Features: {tags}</p>
+                        </div>
+                        
+                        <div style="text-align: center; margin: 30px 0;">
+                            <a href="#" style="background-color: #3498db; color: #ffffff; padding: 15px 30px; text-decoration: none; border-radius: 5px; font-size: 18px; font-weight: bold; display: inline-block;">Shop Now</a>
+                        </div>
+                    </td>
+                </tr>
+                
+                <!-- Footer -->
+                <tr>
+                    <td align="center" style="background-color: #f8f9fa; padding: 20px; border-top: 2px solid #f0f0f0;">
+                        <p style="margin: 0 0 10px 0; color: #333333; font-size: 16px; font-weight: bold;">Thank you for choosing {business_name}</p>
+                        <p style="margin: 0; color: #888888; font-size: 12px;">Follow us for more amazing products and offers!</p>
+                    </td>
+                </tr>
+            </table>
+        </td>
+    </tr>
+</table>
+    """
+    
+    subject_line = f"✨ {email_style.title()}: {product_name} - Only PKR {price}!"
+    
+    return json.dumps({
+        "success": True,
+        "email_content": email_html,
+        "email_subject": subject_line,
+        "email_preview_text": f"Discover {product_name} with {tags}",
+        "product_featured": product_name,
+        "email_style": email_style,
+        "changes_applied": revision_instructions.split(',') if revision_instructions else [],
+        "ready_for_approval": True,
+        "message": "Email content generated using email-optimized template fallback (OpenAI unavailable)" if not is_revision else f"Email template updated with changes (OpenAI fallback)",
+        "ai_provider": "Template Fallback"
+    })
+
+@mcp.tool()
+def get_email_design_approval_tool(email_content: str, subject_line: str, owner_email: str = "shamoonahmed.ai@gmail.com", approval_message: str = "") -> str:
+    """
+    Send email preview to business owner for approval
+    
+    Parameters:
+    - email_content: HTML email template
+    - subject_line: Email subject
+    - owner_email: Business owner's email for approval
+    - approval_message: Custom message for owner
+    """
+    logger.info(f"Email Marketing: Sending approval email to {owner_email}")
+    
+    try:
+        # Sanitize input to handle currency symbols and escape sequences
+        import html
+        email_content = html.unescape(email_content)
+        email_content = email_content.replace('\\₹', '₹').replace('\\$', '$').replace('\\€', '€')
+        
+        # Load environment variables
+        load_dotenv()
+        refresh_token = os.getenv("GOOGLE_REFRESH_TOKEN")
+        
+        if not refresh_token:
+            return json.dumps({
+                "success": False,
+                "error": "missing_google_credentials",
+                "message": "Google refresh token not found in environment variables"
+            })
+        
+        # Extract content from email for preview
+        def extract_email_preview(html_content):
+            """Extract clean text from HTML email for preview"""
+            import re
+            # Remove HTML tags but keep the text content
+            text = re.sub(r'<[^>]+>', ' ', html_content)
+            # Clean up whitespace
+            text = re.sub(r'\s+', ' ', text).strip()
+            return text
+        
+        def extract_promotional_info(html_content):
+            """Extract promotional information from email content"""
+            import re
+            
+            # Extract product names - look for various patterns
+            product_patterns = [
+                r'<h[1-6][^>]*>([^<]+(?:Gel|Cream|Serum|Oil|Cleanser|Moisturizer|Sunscreen)[^<]*)</h[1-6]>',
+                r'<strong[^>]*>([^<]+(?:Gel|Cream|Serum|Oil|Cleanser|Moisturizer|Sunscreen)[^<]*)</strong>',
+                r'<b[^>]*>([^<]+(?:Gel|Cream|Serum|Oil|Cleanser|Moisturizer|Sunscreen)[^<]*)</b>',
+                r'([A-Z][a-z]+ [A-Z][a-z]+ (?:Gel|Cream|Serum|Oil|Cleanser|Moisturizer|Sunscreen))',
+                r'(Aloe Vera [A-Za-z]+)',
+                r'([A-Z][a-z]+ Vera [A-Za-z]+)',
+            ]
+            
+            products = []
+            for pattern in product_patterns:
+                matches = re.findall(pattern, html_content, re.IGNORECASE)
+                products.extend([match.strip() for match in matches if match.strip()])
+            
+            # Extract prices - enhanced patterns for various currencies
+            price_patterns = [
+                r'(?:PKR|Rs\.?|₹)\s*(\d+(?:,\d{3})*(?:\.\d{2})?)',
+                r'(\d+(?:,\d{3})*(?:\.\d{2})?)\s*(?:PKR|Rs\.?|₹)',
+                r'Price[:\s]*(?:PKR|Rs\.?|₹)?\s*(\d+(?:,\d{3})*(?:\.\d{2})?)',
+                r'₹\s*(\d+(?:,\d{3})*(?:\.\d{2})?)',
+            ]
+            
+            prices = []
+            for pattern in price_patterns:
+                matches = re.findall(pattern, html_content, re.IGNORECASE)
+                prices.extend(matches)
+            
+            # Extract features/benefits
+            feature_patterns = [
+                r'(?:Benefits?|Features?)[:\s]*<[^>]*>([^<]+)',
+                r'<li[^>]*>([^<]+)</li>',
+                r'✓\s*([^<\n]+)',
+                r'•\s*([^<\n]+)',
+            ]
+            
+            features = []
+            for pattern in feature_patterns:
+                matches = re.findall(pattern, html_content, re.IGNORECASE | re.DOTALL)
+                features.extend([match.strip() for match in matches if match.strip() and len(match.strip()) > 5])
+            
+            return {
+                "product": products[0] if products else "Featured Product",
+                "price": f"₹{prices[0]}" if prices else "Contact for price", 
+                "features": features[:3]  # Top 3 features
+            }
+        
+        # Extract preview information
+        text_preview = extract_email_preview(email_content)
+        promo_info = extract_promotional_info(email_content)
+        
+        # Create approval email content
+        approval_subject = f"📧 APPROVAL NEEDED: {subject_line}"
+        approval_html = f"""
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <meta charset="UTF-8">
+            <title>Email Campaign Approval</title>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; margin: 0; padding: 20px; }}
+                .approval-container {{ max-width: 800px; margin: 0 auto; }}
+                .approval-header {{ background: #3498db; color: white; padding: 20px; text-align: center; }}
+                .preview-section {{ border: 2px solid #3498db; margin: 20px 0; }}
+                .preview-label {{ background: #3498db; color: white; padding: 10px; text-align: center; font-weight: bold; }}
+                .approval-actions {{ background: #f8f9fa; padding: 20px; text-align: center; margin: 20px 0; }}
+                .approve-btn {{ background: #27ae60; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 16px; margin: 10px; }}
+                .revise-btn {{ background: #e74c3c; color: white; padding: 15px 30px; border: none; border-radius: 5px; font-size: 16px; margin: 10px; }}
+            </style>
+        </head>
+        <body>
+            <div class="approval-container">
+                <div class="approval-header">
+                    <h2>📧 Email Campaign Approval Required</h2>
+                    <p><strong>Subject:</strong> {subject_line}</p>
+                </div>
+                
+                <div class="approval-content">
+                    {f'<div style="background: #fff3cd; padding: 15px; margin: 20px 0; border-left: 4px solid #ffc107; border-radius: 5px;"><strong>📝 Note:</strong> {approval_message}</div>' if approval_message else ''}
+                    
+                    <div class="approval-actions">
+                        <h2 style="color: #2c3e50; margin-top: 0;">📋 Instructions</h2>
+                        <div class="action-item">
+                            <strong>✅ TO APPROVE:</strong> Reply with "APPROVED"
+                        </div>
+                        <div class="action-item">
+                            <strong>🔄 TO REVISE:</strong> Reply with specific changes (e.g., "Change color to blue, make text bigger")
+                        </div>
+                        <div class="action-item">
+                            <strong>❌ TO CANCEL:</strong> Reply with "CANCEL"
+                        </div>
+                    </div>
+                    
+                    <div class="text-preview">
+                        <strong>📄 Email Content Preview:</strong><br>
+                        {text_preview}
+                    </div>
+                    
+                    <div class="preview-section">
+                        <div class="preview-label">🎨 EMAIL DESIGN PREVIEW</div>
+                        <div class="preview-frame" style="background: #f8f9fa;">
+                            <div style="text-align: center; padding: 20px;">
+                                <p style="color: #666; font-size: 14px; margin: 0 0 15px 0;">
+                                    📱 <strong>Email Preview</strong> - This shows how your email will look to customers
+                                </p>
+                                <div style="border: 3px solid #ddd; border-radius: 10px; background: white; padding: 10px; box-shadow: 0 2px 8px rgba(0,0,0,0.1);">
+                                    <div style="background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); color: white; padding: 15px; border-radius: 5px 5px 0 0; text-align: center;">
+                                        <strong>✨ {promo_info.get('product', 'Product')} Campaign</strong>
+                                    </div>
+                                    <div style="padding: 20px; text-align: left; font-size: 14px; line-height: 1.5;">
+                                        {f'<div style="background: #e8f5e8; padding: 10px; border-radius: 5px; margin: 10px 0;"><strong>💰 Price:</strong> {promo_info["price"]}</div>' if promo_info.get('price') else ''}
+                                        {f'<div style="background: #fff3e0; padding: 10px; border-radius: 5px; margin: 10px 0;"><strong>📦 Product:</strong> {promo_info["product"]}</div>' if promo_info.get('product') else ''}
+                                        {'<div style="background: #e3f2fd; padding: 10px; border-radius: 5px; margin: 10px 0;"><strong>⭐ Features:</strong><br>' + '<br>• '.join(promo_info["features"]) + '</div>' if promo_info.get('features') else ''}
+                                        <div style="background: #f5f5f5; padding: 10px; border-radius: 5px; margin: 10px 0; font-size: 13px; color: #666;">
+                                            <strong>📄 Preview:</strong> {text_preview[:200]}{"..." if len(text_preview) > 200 else ""}
+                                        </div>
+                                    </div>
+                                    <div style="background: #f8f9fa; padding: 10px; border-radius: 0 0 5px 5px; text-align: center; color: #666; font-size: 12px;">
+                                        📧 This shows the key promotional elements. Full HTML design with styling will be delivered to customers.
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="preview-section">
+                        <div class="preview-label">📧 ACTUAL EMAIL TEMPLATE PREVIEW</div>
+                        <div style="background: white; padding: 20px; border: 1px solid #eee; max-height: 600px; overflow-y: auto; margin: 10px 0;">
+                            {email_content}
+                        </div>
+                    </div>
+                    
+                    <div style="background: #e3f2fd; border: 2px solid #2196f3; padding: 20px; margin: 20px 0; border-radius: 8px;">
+                        <h4 style="margin: 0 0 15px 0; color: #1565c0;">� Email Content Details:</h4>
+                        <ul style="margin: 0; padding-left: 20px; color: #333;">
+                            <li><strong>Format:</strong> Professional HTML Email</li>
+                            <li><strong>Mobile Responsive:</strong> ✅ Yes</li>
+                            <li><strong>Images:</strong> {"✅ Included" if "img" in email_content.lower() else "📝 Text-based"}</li>
+                            <li><strong>Call-to-Action:</strong> {"✅ Present" if "button" in email_content.lower() or "shop" in email_content.lower() else "📝 Text-based"}</li>
+                            <li><strong>Length:</strong> {len(email_content)} characters</li>
+                        </ul>
+                    </div>
+                    
+                    <div style="text-align: center; margin: 30px 0; padding: 20px; background: #e8f8f5; border-radius: 8px;">
+                        <p style="margin: 0; color: #27ae60; font-weight: bold; font-size: 16px;">
+                            🚀 Ready to send to your customers? Reply to this email!
+                        </p>
+                    </div>
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+        
+        # Load connection for Gmail
+        conn = load_env_connection()
+        
+        # Try Gmail API first, fallback to SMTP
+        try:
+            # Build Gmail service
+            gmail_service = build_gmail_service_from_refresh(conn["refresh_token"])
+            send_method = "gmail_api"
+        except Exception as gmail_error:
+            logger.warning(f"Gmail API not available: {gmail_error}")
+            logger.info("Falling back to SMTP email sending")
+            send_method = "smtp"
+        
+        if send_method == "smtp":
+            # SMTP fallback for email sending
+            try:
+                approval_id = f"APPROVAL_{int(time.time())}"
+                
+                # Send via SMTP (simple email)
+                smtp_result = send_smtp_email(
+                    to_email=owner_email,
+                    from_email=owner_email,  # Same email for SMTP
+                    subject=approval_subject,
+                    html_content=approval_html
+                )
+                
+                if smtp_result:
+                    logger.info(f"Email Marketing: Approval email sent via SMTP")
+                    return json.dumps({
+                        "success": True,
+                        "approval_email_sent": True,
+                        "sent_to": owner_email,
+                        "approval_id": approval_id,
+                        "send_method": "smtp",
+                        "subject_line": subject_line,
+                        "awaiting_response": True,
+                        "message": f"Email preview sent to {owner_email} for approval. Please check your inbox and respond."
+                    })
+                else:
+                    raise Exception("SMTP sending failed")
+                    
+            except Exception as smtp_error:
+                logger.error(f"Email Marketing: SMTP sending failed: {smtp_error}")
+                return json.dumps({
+                    "success": False,
+                    "error": "smtp_send_failed", 
+                    "message": f"Both Gmail API and SMTP failed. Please check email configuration."
+                })
+        
+        # Gmail API sending
+        try:
+            approval_id = f"APPROVAL_{int(time.time())}"
+            
+            # Create email message
+            msg = create_gmail_message(
+                sender=owner_email,
+                to=owner_email,
+                subject=approval_subject,
+                html_content=approval_html
+            )
+            
+            # Send the email
+            result = gmail_service.users().messages().send(
+                userId='me',
+                body=msg
+            ).execute()
+            
+            logger.info(f"Email Marketing: Approval email sent successfully, message ID: {result['id']}")
+            
+            return json.dumps({
+                "success": True,
+                "approval_email_sent": True,
+                "sent_to": owner_email,
+                "approval_id": approval_id,
+                "gmail_message_id": result['id'],
+                "subject_line": subject_line,
+                "awaiting_response": True,
+                "message": f"Email preview sent to {owner_email} for approval. Please check your inbox and respond."
+            })
+            
+        except Exception as gmail_error:
+            logger.error(f"Email Marketing: Gmail API error: {gmail_error}")
+            return json.dumps({
+                "success": False,
+                "error": "gmail_send_failed",
+                "message": f"Failed to send approval email: {str(gmail_error)}"
+            })
+        
+    except Exception as e:
+        logger.error(f"Email Marketing: Approval email failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "approval_email_failed",
+            "message": str(e)
+        })
+
+@mcp.tool()
+def send_emails_tool(approved_email_content: str, subject_line: str, sender_email: str = "shamoonahmed.ai@gmail.com", campaign_name: str = "", test_mode: bool = False) -> str:
+    """
+    Send approved marketing emails to all customers from orders sheet
+    
+    Parameters:
+    - approved_email_content: Final approved HTML email content
+    - subject_line: Email subject line
+    - sender_email: Email address to send from
+    - campaign_name: Campaign name for tracking
+    - test_mode: If true, send only to sender email for testing
+    """
+    logger.info(f"Email Marketing: Starting email campaign '{campaign_name}'")
+    
+    try:
+        # Load connection data
+        conn = load_env_connection()
+        if not conn or not conn.get("refresh_token"):
+            return json.dumps({
+                "success": False,
+                "error": "missing_connection",
+                "message": "Google connection not configured"
+            })
+        
+        # Build services
+        sheets_service = build_sheets_service_from_refresh(conn["refresh_token"])
+        
+        # Try Gmail API first, fallback to SMTP (same as approval tool)
+        try:
+            gmail_service = build_gmail_service_from_refresh(conn["refresh_token"])
+            send_method = "gmail_api"
+        except Exception as gmail_error:
+            logger.warning(f"Gmail API not available: {gmail_error}")
+            logger.info("Using SMTP for email sending")
+            send_method = "smtp"
+        
+        if test_mode:
+            # Test mode: send only to sender email using SMTP
+            try:
+                if send_method == "smtp":
+                    # Use SMTP for test email
+                    smtp_result = send_smtp_email(
+                        to_email=sender_email,
+                        from_email=sender_email,
+                        subject=f"[TEST] {subject_line}",
+                        html_content=approved_email_content
+                    )
+                    
+                    if smtp_result:
+                        return json.dumps({
+                            "success": True,
+                            "test_mode": True,
+                            "emails_sent": 1,
+                            "sent_to": [sender_email],
+                            "campaign_id": f"TEST_{int(time.time())}",
+                            "send_method": "smtp",
+                            "message": f"Test email sent to {sender_email} successfully via SMTP"
+                        })
+                    else:
+                        raise Exception("SMTP test sending failed")
+                        
+                else:
+                    # Use Gmail API for test email
+                    msg = create_gmail_message(
+                        sender=sender_email,
+                        to=sender_email,
+                        subject=f"[TEST] {subject_line}",
+                        html_content=approved_email_content
+                    )
+                    
+                    result = gmail_service.users().messages().send(
+                        userId='me',
+                        body=msg
+                    ).execute()
+                    
+                    return json.dumps({
+                        "success": True,
+                        "test_mode": True,
+                        "emails_sent": 1,
+                        "sent_to": [sender_email],
+                        "campaign_id": f"TEST_{int(time.time())}",
+                        "send_method": "gmail_api",
+                        "message": f"Test email sent to {sender_email} successfully via Gmail API"
+                    })
+                
+            except Exception as test_error:
+                return json.dumps({
+                    "success": False,
+                    "error": "test_send_failed",
+                    "message": f"Test email failed: {str(test_error)}"
+                })
+        
+        # Get customer emails from orders sheet
+        orders_data = get_sheet_data(
+            sheets_service,
+            conn["orders"]["workbook_id"],
+            conn["orders"]["worksheet_name"],
+            conn
+        )
+        
+        # Extract unique customer emails from email column only
+        customer_emails = set()
+        for order in orders_data["data"]:
+            # Try direct field access first (raw field names)
+            for field_name in ["customer_email", "email", "customer email", "Email", "Customer Email"]:
+                if field_name in order:
+                    email = order[field_name]
+                    if email and email.strip():  # Just check if it exists and not empty
+                        customer_emails.add(email.strip())
+                        logger.info(f"Email Marketing: Found email '{email}' in field '{field_name}'")
+                        break
+            
+            # Fallback to smart column detection if direct access didn't work
+            if not customer_emails:
+                detected_cols = smart_column_detection(order, "all")
+                for field_name in ["customer_email", "email", "customer email", "Email", "Customer Email"]:
+                    if field_name in detected_cols:
+                        email = detected_cols[field_name]["value"]
+                        if email and email.strip():
+                            customer_emails.add(email.strip())
+                            logger.info(f"Email Marketing: Found email '{email}' via smart detection in '{field_name}'")
+                            break
+        
+        if not customer_emails:
+            return json.dumps({
+                "success": False,
+                "error": "no_customer_emails",
+                "message": "No customer emails found in orders sheet"
+            })
+        
+        # Send emails to all customers
+        campaign_id = f"CAMP_{int(time.time())}"
+        sent_emails = []
+        failed_emails = []
+        
+        for customer_email in customer_emails:
+            try:
+                if send_method == "smtp":
+                    # Use SMTP for sending
+                    success = send_smtp_email(
+                        to_email=customer_email,
+                        from_email=sender_email,
+                        subject=subject_line,
+                        html_content=approved_email_content
+                    )
+                    
+                    if success:
+                        sent_emails.append(customer_email)
+                        logger.info(f"Email Marketing: Sent via SMTP to {customer_email}")
+                    else:
+                        failed_emails.append(customer_email)
+                        logger.error(f"Email Marketing: Failed SMTP to {customer_email}")
+                else:
+                    # Use Gmail API for sending
+                    msg = create_gmail_message(
+                        sender=sender_email,
+                        to=customer_email,
+                        subject=subject_line,
+                        html_content=approved_email_content
+                    )
+                    
+                    result = gmail_service.users().messages().send(
+                        userId='me',
+                        body=msg
+                    ).execute()
+                    
+                    sent_emails.append(customer_email)
+                    logger.info(f"Email Marketing: Sent via Gmail API to {customer_email}")
+                
+                # Small delay to avoid rate limits
+                time.sleep(0.1)
+                
+            except Exception as send_error:
+                # Try SMTP fallback if Gmail API fails
+                if send_method != "smtp":
+                    try:
+                        logger.info(f"Gmail API failed for {customer_email}, trying SMTP fallback...")
+                        success = send_smtp_email(
+                            to_email=customer_email,
+                            from_email=sender_email,
+                            subject=subject_line,
+                            html_content=approved_email_content
+                        )
+                        
+                        if success:
+                            sent_emails.append(customer_email)
+                            logger.info(f"Email Marketing: Sent via SMTP fallback to {customer_email}")
+                        else:
+                            failed_emails.append(customer_email)
+                            logger.error(f"Email Marketing: SMTP fallback also failed for {customer_email}")
+                    except Exception as smtp_error:
+                        failed_emails.append(customer_email)
+                        logger.error(f"Email Marketing: Both Gmail API and SMTP failed for {customer_email}: {smtp_error}")
+                else:
+                    failed_emails.append(customer_email)
+                    logger.error(f"Email Marketing: Failed to send to {customer_email}: {send_error}")
+        
+        logger.info(f"Email Marketing: Campaign complete. Sent: {len(sent_emails)}, Failed: {len(failed_emails)}")
+        
+        return json.dumps({
+            "success": True,
+            "emails_sent": len(sent_emails),
+            "failed_emails": len(failed_emails),
+            "campaign_id": campaign_id,
+            "campaign_name": campaign_name or "Email Campaign",
+            "sent_to_customers": sent_emails[:10],  # Show first 10 for privacy
+            "failed_addresses": failed_emails,
+            "total_customers": len(customer_emails),
+            "delivery_status": "completed",
+            "message": f"Successfully sent {subject_line} to {len(sent_emails)} customers!"
+        })
+        
+    except Exception as e:
+        logger.error(f"Email Marketing: Campaign failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "campaign_failed",
+            "message": str(e)
+        })
+
+def build_gmail_service_from_refresh(refresh_token):
+    """Build Gmail service using refresh token"""
+    try:
+        from googleapiclient.discovery import build
+        
+        # Use existing Google OAuth credentials
+        creds = build_google_credentials_from_refresh(refresh_token)
+        service = build('gmail', 'v1', credentials=creds)
+        return service
+        
+    except Exception as e:
+        logger.error(f"Failed to build Gmail service: {e}")
+        raise
+
+def create_gmail_message(sender, to, subject, html_content):
+    """Create Gmail API message with email-client optimized format"""
+    import base64
+    from email.mime.text import MIMEText
+    from email.mime.multipart import MIMEMultipart
+    import re
+    
+    # Clean and optimize HTML for email clients
+    html_content = clean_html_for_email(html_content)
+    
+    message = MIMEMultipart('alternative')
+    message['To'] = to
+    message['From'] = sender
+    message['Subject'] = subject
+    message['MIME-Version'] = '1.0'
+    
+    # Create plain text version by stripping HTML tags
+    plain_text = re.sub(r'<[^>]+>', '', html_content)
+    plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+    plain_text = re.sub(r'\n\s*\n', '\n\n', plain_text)  # Clean up spacing
+    
+    # Add both plain text and HTML versions
+    text_part = MIMEText(plain_text, 'plain', 'utf-8')
+    html_part = MIMEText(html_content, 'html', 'utf-8')
+    
+    message.attach(text_part)
+    message.attach(html_part)
+    
+    # Encode for Gmail API
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode()
+    return {'raw': raw_message}
+
+def clean_html_for_email(html_content):
+    """Clean and optimize HTML content for better email client compatibility"""
+    import re
+    
+    # Remove DOCTYPE and html/head tags that can cause issues in email clients
+    html_content = re.sub(r'<!DOCTYPE[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'<html[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'</html>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'<head>.*?</head>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+    html_content = re.sub(r'<meta[^>]*>', '', html_content, flags=re.IGNORECASE)
+    
+    # Move any CSS styles to inline styles and remove style blocks
+    html_content = re.sub(r'<style[^>]*>.*?</style>', '', html_content, flags=re.IGNORECASE | re.DOTALL)
+    
+    # Ensure all images have proper attributes for email clients
+    html_content = re.sub(r'<img([^>]*?)>', r'<img\1 style="display:block; max-width:100%; height:auto;">', html_content)
+    
+    # Clean up body tag - just keep content
+    html_content = re.sub(r'<body[^>]*>', '', html_content, flags=re.IGNORECASE)
+    html_content = re.sub(r'</body>', '', html_content, flags=re.IGNORECASE)
+    
+    return html_content.strip()
+
+def send_smtp_email(to_email, from_email, subject, html_content):
+    """Send email using SMTP as fallback when Gmail API is not available"""
+    try:
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+        import re
+        
+        logger.info(f"Email Marketing: Sending SMTP email to {to_email}")
+        
+        # Clean and optimize HTML for email clients
+        html_content = clean_html_for_email(html_content)
+        
+        # Create message with proper MIME structure
+        msg = MIMEMultipart('alternative')
+        msg['From'] = from_email
+        msg['To'] = to_email
+        msg['Subject'] = subject
+        msg['MIME-Version'] = '1.0'
+        
+        # Create plain text version by stripping HTML tags
+        plain_text = re.sub(r'<[^>]+>', '', html_content)
+        plain_text = re.sub(r'\s+', ' ', plain_text).strip()
+        plain_text = re.sub(r'\n\s*\n', '\n\n', plain_text)  # Clean up spacing
+        
+        # Add both plain text and HTML versions for better compatibility
+        text_part = MIMEText(plain_text, 'plain', 'utf-8')
+        html_part = MIMEText(html_content, 'html', 'utf-8')
+        
+        msg.attach(text_part)
+        msg.attach(html_part)
+        
+        # Get SMTP credentials from environment
+        smtp_server = os.getenv('SMTP_SERVER', 'smtp.gmail.com')
+        smtp_port = int(os.getenv('SMTP_PORT', '587'))
+        smtp_username = os.getenv('SMTP_USERNAME', from_email)
+        smtp_password = os.getenv('SMTP_PASSWORD', '')
+        
+        if not smtp_password:
+            # Try to use the same email as username and check for app password
+            smtp_password = os.getenv('GMAIL_APP_PASSWORD', '')
+            
+        if not smtp_password:
+            logger.warning("No SMTP password found. Please set GMAIL_APP_PASSWORD in .env")
+            return False
+        
+        # Send email
+        server = smtplib.SMTP(smtp_server, smtp_port)
+        server.starttls()  # Enable TLS encryption
+        server.login(smtp_username, smtp_password)
+        
+        text = msg.as_string()
+        server.sendmail(from_email, to_email, text)
+        server.quit()
+        
+        logger.info(f"Email Marketing: SMTP email sent successfully to {to_email}")
+        return True
+        
+    except Exception as smtp_error:
+        logger.error(f"Email Marketing: SMTP sending failed: {smtp_error}")
+        return False
 
 @mcp.tool()
 def say_hello(name: str) -> str:

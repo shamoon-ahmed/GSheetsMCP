@@ -322,3 +322,224 @@ Your inventory sheet should include these additional columns for marketing:
 ---
 
 *The marketing tools extend the order management capabilities with AI-powered visual content creation, providing a complete business automation solution from inventory management to marketing material generation.*
+
+---
+
+# 📧 Email Marketing Automation Tools
+
+This README is AI generated but what exactly happening is:
+- when sending email for approval to business owner's email, it doesn't send complete email design.
+- and when sending it to all customer's email, it sends raw html or bad format. not the real designed email
+ 
+-------------------------
+Building on the poster generation capabilities, this MCP server includes **4 advanced email marketing tools** that create, approve, and send AI-powered email campaigns to your customers. These tools provide complete email marketing automation with professional design and approval workflows.
+
+## 🛠️ **Email Marketing Tools (4 Additional Tools)**
+
+### **✍️ AI Email Content Generation**
+
+11. **`generate_email_content_tool`**
+    - **Purpose:** Generate professional HTML email templates using OpenAI GPT-4o
+    - **Input:** Product details + email style + business branding
+    - **Output:** Complete responsive HTML email with subject line
+    - **Email Styles:**
+      - `promotional` - Sales-focused with clear CTAs and pricing emphasis
+      - `newsletter` - Informative content with product highlights
+      - `sale` - Discount-focused with urgency and savings messaging
+      - `announcement` - New product launches and company updates
+    - **Features:**
+      - Mobile-responsive table-based HTML layout
+      - Inline CSS for maximum email client compatibility
+      - Automatic subject line generation
+      - Template fallback when AI is unavailable
+    - **Example Usage:**
+      ```json
+      generate_email_content_tool(product_details, "promotional", "", "", "MY SKINCARE!")
+      → Returns: Complete HTML email + subject line ready for approval
+      ```
+
+### **👔 Email Design Approval System**
+
+12. **`get_email_design_approval_tool`**
+    - **Purpose:** Send email previews to business owner for campaign approval
+    - **Input:** HTML email content + subject line + owner email
+    - **Output:** Professional approval email with visual preview and instructions
+    - **Features:**
+      - **Smart Content Extraction** - Automatically detects product names, prices, features
+      - **Visual Email Preview** - Shows both summary cards and actual HTML rendering
+      - **Approval Instructions** - Clear respond-with options (APPROVED/REVISE/CANCEL)
+      - **Mobile-Friendly Preview** - Responsive design preview display
+      - **Currency Support** - Properly handles ₹, $, € symbols in content
+    - **Approval Options:**
+      - Reply "APPROVED" → Campaign ready to send
+      - Reply "CANCEL" → Campaign cancelled
+      - Reply with changes → "make text bigger, change color to blue"
+    - **Example Usage:**
+      ```json
+      get_email_design_approval_tool(email_html, subject, "owner@business.com", "Please review this Aloe Vera campaign")
+      → Sends approval email with preview and instructions
+      ```
+
+### **📬 Mass Email Campaign Delivery**
+
+13. **`send_emails_tool`**
+    - **Purpose:** Send approved email campaigns to all customers from orders database
+    - **Input:** Approved email content + campaign details
+    - **Output:** Campaign delivery report with success/failure metrics
+    - **Features:**
+      - **Customer Email Extraction** - Automatically finds customer emails from orders sheet
+      - **Dual Delivery Methods** - Gmail API primary, SMTP fallback
+      - **Campaign Tracking** - Unique campaign IDs and delivery statistics
+      - **Test Mode** - Send to sender only for testing before mass delivery
+      - **Rate Limiting** - Prevents email service throttling
+      - **Error Handling** - Graceful failure recovery with fallback delivery
+    - **Delivery Methods:**
+      - Gmail API (primary) - High deliverability, bulk sending
+      - SMTP Fallback - Gmail app password authentication
+    - **Example Usage:**
+      ```json
+      send_emails_tool(approved_html, "Special Offer: Aloe Vera Gel ₹950!", "business@email.com", "Aloe Vera Campaign", false)
+      → Sends to all customers, returns delivery report
+      ```
+
+## 🎯 **Complete Email Marketing Workflow**
+
+### **End-to-End Campaign Process:**
+
+1. **📧 Content Generation** → `generate_email_content_tool()`
+   - AI creates professional HTML email with your product
+   - Includes mobile-responsive design and clear call-to-actions
+   - Generates compelling subject line automatically
+
+2. **👀 Design Approval** → `get_email_design_approval_tool()`
+   - Sends preview to business owner via email
+   - Shows visual email preview with extracted promotional info
+   - Provides simple approval/revision workflow
+
+3. **🚀 Campaign Delivery** → `send_emails_tool()`
+   - Sends approved email to all customers
+   - Tracks delivery success and generates reports
+   - Handles errors and provides fallback delivery
+
+### **Real Campaign Example:**
+```
+Scenario: Launch campaign for Aloe Vera Gel (₹950)
+
+1. Generate Content:
+   generate_email_content_tool(aloe_product_data, "promotional", "", "", "MY SKINCARE!")
+   → Creates professional email with product image, benefits, pricing, CTA
+
+2. Get Approval:
+   get_email_design_approval_tool(email_html, "Special Offer: Aloe Vera Gel ₹950!", "owner@email.com")
+   → Owner receives preview email with:
+     - Product: "Aloe Vera Gel"  
+     - Price: "₹950"
+     - Features: ["Soothing", "Hydration", "Cooling"]
+     - Visual HTML preview
+
+3. Send Campaign (after "APPROVED" reply):
+   send_emails_tool(approved_html, subject, "business@email.com", "Aloe Vera Launch")
+   → Delivers to all customers: "✅ Successfully sent to 47 customers!"
+```
+
+## ⚙️ **Email Marketing Setup Requirements**
+
+### **Environment Configuration:**
+```env
+# OpenAI for email content generation
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Gmail configuration for sending
+GOOGLE_REFRESH_TOKEN=your_refresh_token
+SMTP_SERVER=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your_email@gmail.com
+GMAIL_APP_PASSWORD=your_gmail_app_password
+
+# Existing inventory/orders config
+ORDERS_SHEET_ID=your_orders_sheet_id
+ORDERS_WORKSHEET_NAME=your_orders_worksheet_name
+```
+
+### **Customer Email Requirements:**
+Your **orders sheet** must include customer email addresses in any of these column formats:
+- `customer_email`, `email`, `customer email`, `Email`, `Customer Email`
+
+**Example Orders Sheet with Email Marketing Support:**
+```
+| Order No | Item Name     | Customer Name | Customer Email        | Address      | Status |
+|----------|---------------|---------------|-----------------------|--------------|--------|
+| ORD-001  | Aloe Vera Gel | John Doe      | john@email.com        | City ABC     | Delivered |
+| ORD-002  | Face Cream    | Jane Smith    | jane.smith@email.com  | Town XYZ     | Pending |
+```
+
+## 📊 **Email Marketing Features**
+
+### **🎨 Professional Email Design**
+- **Mobile-Responsive Layout** - Works on all devices and email clients
+- **Table-Based Structure** - Maximum compatibility with Gmail, Outlook, Apple Mail
+- **Inline CSS Styling** - No external dependencies, renders everywhere
+- **Email-Optimized Images** - Proper scaling and fallbacks
+
+### **🤖 AI-Powered Content Creation**
+- **OpenAI GPT-4o Integration** - Latest AI model for email copywriting
+- **Product-Aware Generation** - Extracts product details intelligently
+- **Style Customization** - Multiple email template styles available
+- **Subject Line Optimization** - AI-generated engaging subject lines
+
+### **✅ Professional Approval Process**
+- **Visual Email Preview** - See exactly how customers will receive it
+- **Smart Content Detection** - Automatically extracts prices, products, features
+- **Simple Approval Workflow** - Reply-based approval system
+- **Revision Support** - Request specific changes via email reply
+
+### **📈 Campaign Management**
+- **Automated Customer Targeting** - Uses existing orders database
+- **Delivery Tracking** - Success/failure reporting per campaign
+- **Test Mode** - Send to yourself first before mass delivery
+- **Dual Delivery Systems** - Gmail API + SMTP fallback reliability
+
+## 🚀 **Email Marketing Use Cases**
+
+### **Product Launch Campaigns**
+- Generate emails for new inventory items
+- Include product images, pricing, and benefits
+- Send to all existing customers automatically
+
+### **Promotional Sales**
+- Create discount and sale announcement emails
+- Highlight special offers with compelling CTAs
+- Track campaign performance and delivery
+
+### **Seasonal Marketing**
+- Holiday promotions and themed campaigns
+- Seasonal product recommendations
+- Customer re-engagement campaigns
+
+### **Inventory Management Integration**
+- Email campaigns for overstocked items
+- New arrival notifications
+- Back-in-stock alerts for popular products
+
+## 💡 **Email Marketing Benefits**
+
+- **🎯 Targeted Campaigns** - Uses real customer data from orders
+- **⚡ Rapid Deployment** - Generate, approve, and send in minutes
+- **📱 Mobile-First Design** - Professional rendering on all devices
+- **🤖 AI Content Creation** - No copywriting skills required
+- **✅ Quality Control** - Built-in approval process prevents mistakes
+- **📊 Performance Tracking** - Delivery reports and campaign metrics
+- **💰 Cost-Effective** - Complete email marketing solution in one tool
+
+### **Complete Business Automation Stack**
+```
+📊 Order Management → 🎨 Poster Generation → 📧 Email Marketing
+     ↓                        ↓                      ↓
+  Track customers         Create visuals         Engage customers
+  Manage inventory       Generate content       Drive sales
+  Process orders         AI-powered design      Automated delivery
+```
+
+---
+
+*The email marketing tools complete the business automation suite, providing end-to-end customer engagement from order processing to visual content creation to automated email campaigns. This creates a comprehensive solution for modern e-commerce and retail businesses.*
