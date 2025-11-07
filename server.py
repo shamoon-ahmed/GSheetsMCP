@@ -1,5 +1,9 @@
 import os, json, time
 import logging
+import requests
+import base64
+from io import BytesIO
+from dotenv import load_dotenv
 
 import gspread
 from google.oauth2.credentials import Credentials
@@ -8,6 +12,9 @@ from googleapiclient.discovery import build
 from cryptography.fernet import Fernet
 
 from fastmcp import FastMCP
+
+# Load environment variables
+load_dotenv()
 
 from fastmcp.server.dependencies import get_http_headers
 
@@ -2273,6 +2280,385 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
             "success": False,
             "error": "cancellation_failed",
             "details": str(e)
+        })
+
+# ========================================
+# MARKETING TOOLS FOR POSTER GENERATION
+# ========================================
+
+def load_env_connection():
+    """Load connection data from environment variables"""
+    return {
+        "inventory": {
+            "workbook_id": os.getenv("INVENTORY_SHEET_ID"),
+            "worksheet_name": os.getenv("INVENTORY_WORKSHEET_NAME")
+        },
+        "orders": {
+            "workbook_id": os.getenv("ORDERS_SHEET_ID"),
+            "worksheet_name": os.getenv("ORDERS_WORKSHEET_NAME")
+        },
+        "refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN")
+    }
+
+@mcp.tool()
+def search_product_tool(product_name: str) -> str:
+    """
+    Search for the specific product in inventory and return complete details of that row.
+    Returns: product name, price, weight, quantity, status, media (image URLs), and tags.
+    
+    Schema: ItemID | Product Name | Price (PKR) | Weight | Quantity | Status | Media | Tags
+    """
+    logger.info(f"Marketing: Searching for product '{product_name}'")
+    
+    try:
+        # Load connection from environment variables
+        conn = load_env_connection()
+        if not conn or not conn.get("refresh_token"):
+            return json.dumps({
+                "success": False,
+                "error": "missing_env_config",
+                "message": "Environment variables not configured properly"
+            })
+        
+        # Build Google Sheets service
+        service = build_sheets_service_from_refresh(conn["refresh_token"])
+        
+        # Get inventory data
+        inventory_data = get_sheet_data(
+            service,
+            conn["inventory"]["workbook_id"],
+            conn["inventory"]["worksheet_name"],
+            conn
+        )
+        
+        # Search for the product
+        for item in inventory_data["data"]:
+            detected_cols = smart_column_detection(item, "all")
+            
+            if "product_name" in detected_cols:
+                inventory_product_name = detected_cols["product_name"]["value"]
+                
+                # Check if product matches (case-insensitive, partial match)
+                if product_name.lower() in inventory_product_name.lower():
+                    
+                    # Extract all relevant details for marketing
+                    product_details = {
+                        "item_id": detected_cols.get("id", {}).get("value", ""),
+                        "product_name": inventory_product_name,
+                        "price": detected_cols.get("price", {}).get("value", ""),
+                        "weight": detected_cols.get("weight", {}).get("value", ""),
+                        "quantity": detected_cols.get("quantity", {}).get("value", ""),
+                        "status": detected_cols.get("status", {}).get("value", ""),
+                        "media": "",  # Will be populated from media column
+                        "tags": ""    # Will be populated from tags column
+                    }
+                    
+                    # Extract Media column (image URLs)
+                    for key, value in item.items():
+                        clean_key = str(key).strip().lower()
+                        if "media" in clean_key or "image" in clean_key or "photo" in clean_key:
+                            product_details["media"] = str(value).strip()
+                            break
+                    
+                    # Extract Tags column
+                    for key, value in item.items():
+                        clean_key = str(key).strip().lower()
+                        if "tag" in clean_key or "keyword" in clean_key:
+                            product_details["tags"] = str(value).strip()
+                            break
+                    
+                    logger.info(f"Marketing: Found product '{inventory_product_name}'")
+                    
+                    return json.dumps({
+                        "success": True,
+                        "product": product_details,
+                        "message": f"Product '{inventory_product_name}' found successfully"
+                    })
+        
+        # Product not found
+        return json.dumps({
+            "success": False,
+            "error": "product_not_found",
+            "message": f"Product '{product_name}' not found in inventory"
+        })
+        
+    except Exception as e:
+        logger.error(f"Marketing product search failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "search_failed",
+            "message": str(e)
+        })
+
+@mcp.tool()
+def prompt_structure_tool(product_details: str, poster_style: str = "professional") -> str:
+    """
+    Create optimized prompt for poster generation using product details.
+    Takes product details and formats them into Gemini-friendly marketing prompt.
+    
+    Available styles: professional, vibrant, minimal, luxury, modern
+    """
+    logger.info(f"Marketing: Structuring prompt for poster style '{poster_style}'")
+    
+    try:
+        # Parse product details
+        product_data = json.loads(product_details)
+        
+        if not product_data.get("success"):
+            return json.dumps({
+                "success": False,
+                "error": "invalid_product_data",
+                "message": "Product details are invalid or product not found"
+            })
+        
+        product = product_data.get("product", {})
+        
+        # Style-specific prompt templates optimized for marketing posters
+        style_templates = {
+            "professional": """Create a clean, professional marketing poster for '{name}' priced at {price}. 
+Key features: {tags}. Weight: {weight}. 
+Design requirements: Modern typography, elegant layout, corporate colors (navy, white, gold accents), 
+professional product photography style, clear pricing display, minimalist design elements.""",
+            
+            "vibrant": """Design a vibrant, eye-catching marketing poster for '{name}' at {price}. 
+Highlight features: {tags}. Weight: {weight}.
+Design requirements: Bold colors (bright blues, oranges, greens), dynamic geometric shapes, 
+energetic typography, striking visual elements, youthful and trendy aesthetic.""",
+            
+            "minimal": """Create a minimalist, sophisticated poster for '{name}' priced at {price}. 
+Features: {tags}. Weight: {weight}.
+Design requirements: Clean lines, plenty of white space, premium typography, 
+subtle color palette (black, white, one accent color), elegant simplicity, luxury feel.""",
+            
+            "luxury": """Design a luxury premium poster for '{name}' at {price}. 
+Premium features: {tags}. Weight: {weight}.
+Design requirements: Elegant gold/black color scheme, premium fonts, 
+sophisticated layout, high-end product presentation, luxury brand aesthetics.""",
+            
+            "modern": """Create a contemporary, trendy poster for '{name}' priced at {price}. 
+Modern features: {tags}. Weight: {weight}.
+Design requirements: Current design trends, fresh color combinations, 
+modern typography, innovative layout, Instagram-ready aesthetic."""
+        }
+        
+        # Get template or default to professional
+        template = style_templates.get(poster_style, style_templates["professional"])
+        
+        # Format the prompt with product data
+        formatted_prompt = template.format(
+            name=product.get("product_name", "Product"),
+            price=product.get("price", "Price not available"),
+            tags=product.get("tags", "Premium quality product"),
+            weight=product.get("weight", ""),
+            status=product.get("status", "")
+        )
+        
+        # Add additional context for better poster generation
+        enhanced_prompt = f"""{formatted_prompt}
+
+Additional Context:
+- Product ID: {product.get("item_id", "")}
+- Availability: {product.get("status", "Available")}
+- Stock: {product.get("quantity", "")} units
+- Create a marketing poster suitable for social media, print, and digital advertising
+- Include all text elements clearly readable
+- Make the product the hero of the design
+- Ensure pricing is prominently displayed"""
+        
+        logger.info(f"Marketing: Prompt structured successfully for '{product.get('product_name')}'")
+        
+        return json.dumps({
+            "success": True,
+            "prompt": enhanced_prompt,
+            "style": poster_style,
+            "product_name": product.get("product_name"),
+            "has_product_image": bool(product.get("media")),
+            "product_image_url": product.get("media", ""),
+            "message": f"Prompt created for {poster_style} style poster"
+        })
+        
+    except json.JSONDecodeError:
+        return json.dumps({
+            "success": False,
+            "error": "invalid_json",
+            "message": "Product details must be valid JSON"
+        })
+    except Exception as e:
+        logger.error(f"Marketing prompt structuring failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "prompt_creation_failed",
+            "message": str(e)
+        })
+
+@mcp.tool()
+def generate_images_tool(prompt: str, product_image_url: str = "", output_format: str = "base64") -> str:
+    """
+    Generate marketing poster using Gemini 2.5 Flash Image API.
+    Can work with prompt-only or prompt + existing product image from Google Sheets.
+    
+    Parameters:
+    - prompt: Marketing prompt for poster generation
+    - product_image_url: Optional product image URL from Media column
+    - output_format: "base64" (default) or "file"
+    """
+    logger.info(f"Marketing: Generating poster image with Gemini API")
+    
+    try:
+        # Get Gemini API key from environment
+        gemini_api_key = os.getenv("GEMINI_API_KEY")
+        if not gemini_api_key:
+            return json.dumps({
+                "success": False,
+                "error": "missing_gemini_api_key",
+                "message": "GEMINI_API_KEY not found in environment variables. Please add it to .env file."
+            })
+        
+        # Try to import and use Gemini API
+        try:
+            from google import genai
+            from PIL import Image
+            
+            # Initialize Gemini client
+            client = genai.Client(api_key=gemini_api_key)
+            
+            # Prepare content for generation
+            contents = [prompt]
+            
+            # If product image URL is provided, fetch and include it
+            product_image_status = "no_image"
+            if product_image_url:
+                try:
+                    logger.info(f"Marketing: Fetching product image from {product_image_url}")
+                    response = requests.get(product_image_url, timeout=10)
+                    if response.status_code == 200:
+                        image = Image.open(BytesIO(response.content))
+                        contents.append(image)
+                        product_image_status = "image_added"
+                        logger.info("Marketing: Product image successfully added to generation")
+                    else:
+                        product_image_status = f"fetch_failed_status_{response.status_code}"
+                        logger.warning(f"Marketing: Could not fetch product image, status: {response.status_code}")
+                except Exception as e:
+                    product_image_status = f"fetch_error_{str(e)}"
+                    logger.warning(f"Marketing: Product image fetch failed: {e}")
+                    # Continue without image
+            
+            # Generate poster using Gemini Image Generation Model
+            logger.info("Marketing: Calling Gemini API for image generation")
+            
+            # Get model name from environment variables
+            primary_model = os.getenv("GEMINI_MODEL_NAME", "gemini-2.5-flash-image")
+            primary_model_error = None
+            
+            # Try different image generation models (primary first, then fallbacks)
+            image_models = [
+                primary_model,                  # Model from .env
+            ]
+            
+            response = None
+            model_used = None
+            
+            for model in image_models:
+                try:
+                    logger.info(f"Marketing: Trying model {model}")
+                    response = client.models.generate_content(
+                        model=model,
+                        contents=contents,
+                    )
+                    model_used = model
+                    logger.info(f"Marketing: Successfully used model {model}")
+                    break
+                except Exception as model_error:
+                    logger.warning(f"Marketing: Model {model} failed: {model_error}")
+                    primary_model_error = str(model_error)
+                    logger.error(f"Marketing: Model {primary_model} failed: {model_error}")
+                    
+                    # Check if it's a quota issue and provide helpful feedback
+                    if "RESOURCE_EXHAUSTED" in str(model_error) or "quota" in str(model_error).lower():
+                        logger.error("Marketing: ⚠️ QUOTA EXHAUSTED - Please upgrade to paid tier for image generation!")
+                    break
+            
+            if not response:
+                return json.dumps({
+                    "success": False,
+                    "error": "image_generation_failed",
+                    "message": f"Image generation failed with {primary_model}. Please check your API quota and upgrade to paid tier if needed.",
+                    "primary_model_error": primary_model_error,
+                    "quota_exhausted": "RESOURCE_EXHAUSTED" in (primary_model_error or "")
+                })
+            
+            # Process response
+            generated_images = []
+            text_response = ""
+            
+            for part in response.candidates[0].content.parts:
+                if part.text is not None:
+                    text_response = part.text
+                    logger.info("Marketing: Received text description from Gemini")
+                elif part.inline_data is not None:
+                    # Convert image to requested format
+                    image = Image.open(BytesIO(part.inline_data.data))
+                    
+                    if output_format == "base64":
+                        # Convert to base64 for easy transmission
+                        buffered = BytesIO()
+                        image.save(buffered, format="PNG")
+                        img_base64 = base64.b64encode(buffered.getvalue()).decode()
+                        generated_images.append(f"data:image/png;base64,{img_base64}")
+                        logger.info("Marketing: Image converted to base64 format")
+                    else:
+                        # Save to file
+                        filename = f"poster_{int(time.time())}.png"
+                        image.save(filename)
+                        generated_images.append(filename)
+                        logger.info(f"Marketing: Image saved as {filename}")
+            
+            logger.info("Marketing: Poster generated successfully with Gemini API")
+            
+            return json.dumps({
+                "success": True,
+                "generated_images": generated_images,
+                "description": text_response or "Marketing poster generated successfully",
+                "prompt_used": prompt,
+                "has_product_image": bool(product_image_url),
+                "product_image_url": product_image_url,
+                "product_image_status": product_image_status,
+                "api_status": "real_gemini_api",
+                "model_used": model_used or primary_model,
+                "primary_model_requested": primary_model,
+                "primary_model_error": None,
+                "fallback_used": False,
+                "quota_exhausted": False,
+                "is_text_only_response": len(generated_images) == 0 and text_response is not None,
+                "message": f"✅ Poster generated successfully using {model_used or primary_model}"
+            })
+            
+        except ImportError:
+            # Fallback if Gemini library not installed
+            logger.warning("Marketing: Gemini library not installed, using mock response")
+            return json.dumps({
+                "success": False,
+                "error": "gemini_library_missing",
+                "message": "Google Gemini library not installed. Install with: pip install google-genai",
+                "api_status": "library_missing"
+            })
+        
+        except Exception as api_error:
+            logger.error(f"Marketing: Gemini API call failed: {api_error}")
+            return json.dumps({
+                "success": False,
+                "error": "gemini_api_error",
+                "message": f"Gemini API error: {str(api_error)}",
+                "api_status": "api_error"
+            })
+        
+    except Exception as e:
+        logger.error(f"Marketing image generation failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "generation_failed",
+            "message": str(e)
         })
 
 @mcp.tool()

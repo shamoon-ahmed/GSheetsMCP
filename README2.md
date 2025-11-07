@@ -170,3 +170,155 @@ Order No | Item Name | Weight | Quantity | Subtotal (PKR) | Payment Mode | Custo
 ---
 
 *This MCP server provides a complete order management solution that adapts to your business needs while maintaining accurate inventory control and customer order tracking.*
+
+---
+
+# 🎨 Marketing Tools for AI-Powered Poster Generation
+
+In addition to order management, this MCP server includes **3 powerful marketing tools** designed for automated poster generation using Google Gemini AI. These tools work together to create professional marketing materials directly from your product inventory data.
+
+## 🛠️ **Marketing Tools (3 Additional Tools)**
+
+### **🔍 Product Search Tool**
+
+8. **`search_product_tool`**
+   - **Purpose:** Search and retrieve complete product details from inventory for marketing use
+   - **Input:** Product name (partial matches supported)
+   - **Output:** Complete product information including price, weight, quantity, media URLs, and marketing tags
+   - **Schema Support:** ItemID | Product Name | Price (PKR) | Weight | Quantity | Status | Media | Tags
+   - **Example Usage:** 
+     ```json
+     search_product_tool("Aloe Vera Gel")
+     → Returns: {product_name, price, weight, quantity, status, media_url, tags}
+     ```
+
+### **📝 Prompt Engineering Tool**
+
+9. **`prompt_structure_tool`**
+   - **Purpose:** Create optimized marketing prompts for AI poster generation
+   - **Input:** Product details JSON + poster style preference
+   - **Output:** Professional marketing prompt optimized for Gemini AI
+   - **Available Styles:**
+     - `professional` - Clean, corporate design with navy/white/gold colors
+     - `vibrant` - Bold, energetic with bright colors and dynamic shapes
+     - `minimal` - Sophisticated, clean lines with premium typography
+     - `luxury` - Elegant gold/black color schemes for premium products
+     - `modern` - Contemporary, trendy designs for Instagram-ready aesthetics
+   - **Example Usage:**
+     ```json
+     prompt_structure_tool(product_details, "professional")
+     → Returns: Structured marketing prompt with design requirements
+     ```
+
+### **🖼️ AI Image Generation Tool**
+
+10. **`generate_images_tool`**
+    - **Purpose:** Generate marketing posters using Google Gemini 2.5 Flash Image API
+    - **Input:** Marketing prompt + optional product image URL
+    - **Output:** Base64 encoded poster images or file paths
+    - **Features:**
+      - Works with prompt-only or prompt + existing product images
+      - Supports product images from Google Sheets Media column
+      - Multiple output formats (base64, file)
+      - Real-time API integration with Gemini AI
+    - **Requirements:** Paid Gemini API tier for image generation
+    - **Example Usage:**
+      ```json
+      generate_images_tool(marketing_prompt, product_image_url, "base64")
+      → Returns: Generated poster as base64 image data
+      ```
+
+## 🎯 **Marketing Workflow**
+
+### **Complete Marketing Automation Process:**
+
+1. **🔍 Product Search** → `search_product_tool("Coconut Lip Balm")`
+   - Retrieves product details from inventory
+   - Includes price, features, media URLs, marketing tags
+
+2. **📝 Prompt Creation** → `prompt_structure_tool(product_data, "professional")`
+   - Converts product data into optimized marketing prompt
+   - Applies style-specific design requirements
+
+3. **🖼️ Image Generation** → `generate_images_tool(prompt, media_url)`
+   - Generates professional poster using Gemini AI
+   - Combines product data with AI-powered design
+
+### **End-to-End Example:**
+```
+Input: "Create a professional poster for Coconut Lip Balm"
+
+1. Search: search_product_tool("Coconut Lip Balm")
+   → {name: "Coconut Lip Balm", price: "400 PKR", tags: "moisturizing, coconut, daily-use"}
+
+2. Prompt: prompt_structure_tool(product_data, "professional") 
+   → "Create a clean, professional marketing poster for 'Coconut Lip Balm' priced at 400..."
+
+3. Generate: generate_images_tool(marketing_prompt, product_image_url)
+   → Base64 encoded professional poster image
+```
+
+## ⚙️ **Marketing Setup Requirements**
+
+### **Environment Configuration:**
+```env
+# Required for marketing tools
+GEMINI_API_KEY=your_gemini_api_key_here
+GEMINI_MODEL_NAME=gemini-2.5-flash-image-preview
+
+# Existing Google Sheets config
+INVENTORY_SHEET_ID=your_sheet_id
+INVENTORY_WORKSHEET_NAME=your_sheet_name
+GOOGLE_REFRESH_TOKEN=your_refresh_token
+```
+
+### **Google Sheets Schema for Marketing:**
+Your inventory sheet should include these additional columns for marketing:
+
+| Column | Purpose | Example |
+|--------|---------|---------|
+| **Media** | Product image URLs | `https://example.com/product.jpg` |
+| **Tags** | Marketing keywords | `moisturizing, organic, daily-use` |
+
+**Complete Marketing-Ready Inventory Example:**
+```
+| Product Name    | Price | Weight | Quantity | Status   | Media                    | Tags                     |
+|-----------------|-------|--------|----------|----------|--------------------------|--------------------------|
+| Aloe Vera Gel   | 950   | 100ml  | 15       | In Stock | https://amazon.com/...   | soothing, hydration, cooling |
+| Coconut Lip Balm| 400   | 20g    | 30       | In Stock | https://images.com/...   | lip-care, moisturizing, coconut |
+```
+
+## 🚀 **Marketing Use Cases**
+
+### **Automated Social Media Content**
+- Generate Instagram-ready product posters
+- Create Facebook marketplace images
+- Produce promotional material for stories
+
+### **E-commerce Product Images** 
+- Professional product photography alternatives
+- Consistent branding across product listings
+- Quick poster generation for new products
+
+### **Print Marketing Materials**
+- Flyers and brochures for physical stores
+- Product catalog images
+- Promotional banners and signage
+
+### **Bulk Marketing Automation**
+- Generate posters for entire product inventory
+- Create seasonal promotional materials
+- Batch process products with different styles
+
+## 💡 **Marketing Benefits**
+
+- **🤖 AI-Powered Design** - Professional posters without graphic design skills
+- **⚡ Instant Generation** - Create marketing materials in seconds
+- **🎨 Multiple Styles** - Choose from 5 different design aesthetics
+- **📊 Data-Driven** - Uses real inventory data for accurate pricing and details
+- **🔗 Seamless Integration** - Works with existing inventory management system
+- **💰 Cost-Effective** - No need for expensive design software or freelancers
+
+---
+
+*The marketing tools extend the order management capabilities with AI-powered visual content creation, providing a complete business automation solution from inventory management to marketing material generation.*
