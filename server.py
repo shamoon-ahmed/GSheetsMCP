@@ -2330,6 +2330,11 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
 # MARKETING TOOLS FOR POSTER GENERATION
 # ========================================
 
+# @mcp.tool()
+# def google_sheets_query_tool():
+#     # we already have this made above for order management.
+#     # we'll that same tool for marketing as well to get the inventory/product data for correct product name to pass in search_product_tool()
+
 @mcp.tool()
 def search_product_tool(product_name: str) -> str:
     """
