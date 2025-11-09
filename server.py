@@ -109,6 +109,20 @@ def load_connection():
         logger.error(f"Failed to load connection file: {e}")
         return None
 
+def load_env_connection():
+    """Load connection data from environment variables"""
+    return {
+        "inventory": {
+            "workbook_id": os.getenv("INVENTORY_SHEET_ID"),
+            "worksheet_name": os.getenv("INVENTORY_WORKSHEET_NAME")
+        },
+        "orders": {
+            "workbook_id": os.getenv("ORDERS_SHEET_ID"),
+            "worksheet_name": os.getenv("ORDERS_WORKSHEET_NAME")
+        },
+        "refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN")
+    }
+
 def build_sheets_service_from_refresh(refresh_token):
     logger.debug("Building credentials from refresh token...")
     logger.debug(f"Client ID: {GOOGLE_CLIENT_ID}")
@@ -2316,27 +2330,18 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
 # MARKETING TOOLS FOR POSTER GENERATION
 # ========================================
 
-def load_env_connection():
-    """Load connection data from environment variables"""
-    return {
-        "inventory": {
-            "workbook_id": os.getenv("INVENTORY_SHEET_ID"),
-            "worksheet_name": os.getenv("INVENTORY_WORKSHEET_NAME")
-        },
-        "orders": {
-            "workbook_id": os.getenv("ORDERS_SHEET_ID"),
-            "worksheet_name": os.getenv("ORDERS_WORKSHEET_NAME")
-        },
-        "refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN")
-    }
-
 @mcp.tool()
 def search_product_tool(product_name: str) -> str:
     """
     Search for the specific product in inventory and return complete details of that row.
-    Returns: product name, price, weight, quantity, status, media (image URLs), and tags.
     
-    Schema: ItemID | Product Name | Price (PKR) | Weight | Quantity | Status | Media | Tags
+    Dynamic and flexible approach that:
+    - Returns ALL columns from the matched row with their original names
+    - Works with any sheet structure and column names
+    - Preserves actual column headers from your sheet
+    - Provides complete product information for marketing
+    
+    Example output includes: ItemID, Product Name, Price, Weight, Quantity, Status, Media, Tags, etc.
     """
     logger.info(f"Marketing: Searching for product '{product_name}'")
     
@@ -2361,55 +2366,76 @@ def search_product_tool(product_name: str) -> str:
             conn
         )
         
+        # Get the original headers for reference
+        original_headers = inventory_data.get("headers", [])
+        
         # Search for the product
         for item in inventory_data["data"]:
-            detected_cols = smart_column_detection(item, "all")
+            # item is already a processed dictionary with lowercase keys
+            # Find product name using flexible detection
+            product_found = False
+            matched_product_name = ""
             
-            if "product_name" in detected_cols:
-                inventory_product_name = detected_cols["product_name"]["value"]
+            # Check various product name variations in the processed item
+            for col_key, col_value in item.items():
+                if any(keyword in col_key.lower() for keyword in ["product", "name", "item", "title"]):
+                    item_name = str(col_value).strip()
+                    if item_name and product_name.lower() in item_name.lower():
+                        product_found = True
+                        matched_product_name = item_name
+                        break
+            
+            if product_found:
+                # Build complete product details with ALL available columns
+                complete_product_data = {}
                 
-                # Check if product matches (case-insensitive, partial match)
-                if product_name.lower() in inventory_product_name.lower():
-                    
-                    # Extract all relevant details for marketing
-                    product_details = {
-                        "item_id": detected_cols.get("id", {}).get("value", ""),
-                        "product_name": inventory_product_name,
-                        "price": detected_cols.get("price", {}).get("value", ""),
-                        "weight": detected_cols.get("weight", {}).get("value", ""),
-                        "quantity": detected_cols.get("quantity", {}).get("value", ""),
-                        "status": detected_cols.get("status", {}).get("value", ""),
-                        "media": "",  # Will be populated from media column
-                        "tags": ""    # Will be populated from tags column
-                    }
-                    
-                    # Extract Media column (image URLs)
-                    for key, value in item.items():
-                        clean_key = str(key).strip().lower()
-                        if "media" in clean_key or "image" in clean_key or "photo" in clean_key:
-                            product_details["media"] = str(value).strip()
-                            break
-                    
-                    # Extract Tags column
-                    for key, value in item.items():
-                        clean_key = str(key).strip().lower()
-                        if "tag" in clean_key or "keyword" in clean_key:
-                            product_details["tags"] = str(value).strip()
-                            break
-                    
-                    logger.info(f"Marketing: Found product '{inventory_product_name}'")
-                    
-                    return json.dumps({
-                        "success": True,
-                        "product": product_details,
-                        "message": f"Product '{inventory_product_name}' found successfully"
-                    })
+                # Create mapping from processed keys back to original headers
+                original_to_processed = {}
+                processed_to_original = {}
+                
+                if len(original_headers) <= len(item):
+                    for i, header in enumerate(original_headers):
+                        processed_key = header.lower().replace(' ', '_').replace('-', '_').replace('(', '').replace(')', '')
+                        original_to_processed[header] = processed_key
+                        processed_to_original[processed_key] = header
+                
+                # Add all available data using original column names
+                for processed_key, value in item.items():
+                    original_key = processed_to_original.get(processed_key, processed_key)
+                    complete_product_data[original_key] = value
+                
+                # Add raw row data for reference (using original headers)
+                raw_row_data = complete_product_data.copy()
+                
+                # Enhanced response with flexible structure
+                logger.info(f"Marketing: Found product '{matched_product_name}' with {len(complete_product_data)} columns")
+                
+                return json.dumps({
+                    "success": True,
+                    "product": {
+                        "matched_name": matched_product_name,
+                        "search_query": product_name,
+                        "columns_found": len(complete_product_data),
+                        "product_data": complete_product_data,
+                        "raw_row": raw_row_data,
+                        "available_columns": list(complete_product_data.keys())
+                    },
+                    "sheet_info": {
+                        "total_headers": len(original_headers),
+                        "headers": original_headers
+                    },
+                    "message": f"Product '{matched_product_name}' found with complete row data"
+                })
         
         # Product not found
         return json.dumps({
             "success": False,
             "error": "product_not_found",
-            "message": f"Product '{product_name}' not found in inventory"
+            "message": f"Product '{product_name}' not found in inventory",
+            "sheet_info": {
+                "total_products": len(inventory_data["data"]),
+                "available_headers": original_headers
+            }
         })
         
     except Exception as e:
@@ -2421,90 +2447,56 @@ def search_product_tool(product_name: str) -> str:
         })
 
 @mcp.tool()
-def prompt_structure_tool(product_details: str, poster_style: str = "professional") -> str:
+def prompt_structure_tool(product_details: str, user_prompt: str) -> str:
     """
     Create optimized prompt for poster generation using product details.
     Takes product details and formats them into Gemini-friendly marketing prompt.
-    
-    Available styles: professional, vibrant, minimal, luxury, modern
     """
-    logger.info(f"Marketing: Structuring prompt for poster style '{poster_style}'")
+    logger.info(f"Marketing: Structuring prompt for poster style")
     
     try:
         # Parse product details
         product_data = json.loads(product_details)
         
-        if not product_data.get("success"):
+        # Handle both full search_product_tool response AND direct product data
+        if product_data.get("success") and "product" in product_data:
+            # Full search_product_tool response format
+            product = product_data.get("product", {}).get("product_data", {})
+        else:
+            # Direct product data format (what the client is actually sending)
+            product = product_data
+        
+        if not product:
             return json.dumps({
                 "success": False,
-                "error": "invalid_product_data",
-                "message": "Product details are invalid or product not found"
+                "error": "empty_product_data", 
+                "message": "No product data found in the provided details"
             })
         
-        product = product_data.get("product", {})
-        
-        # Style-specific prompt templates optimized for marketing posters
-        style_templates = {
-            "professional": """Create a clean, professional marketing poster for '{name}' priced at {price}. 
-Key features: {tags}. Weight: {weight}. 
-Design requirements: Modern typography, elegant layout, corporate colors (navy, white, gold accents), 
-professional product photography style, clear pricing display, minimalist design elements.""",
-            
-            "vibrant": """Design a vibrant, eye-catching marketing poster for '{name}' at {price}. 
-Highlight features: {tags}. Weight: {weight}.
-Design requirements: Bold colors (bright blues, oranges, greens), dynamic geometric shapes, 
-energetic typography, striking visual elements, youthful and trendy aesthetic.""",
-            
-            "minimal": """Create a minimalist, sophisticated poster for '{name}' priced at {price}. 
-Features: {tags}. Weight: {weight}.
-Design requirements: Clean lines, plenty of white space, premium typography, 
-subtle color palette (black, white, one accent color), elegant simplicity, luxury feel.""",
-            
-            "luxury": """Design a luxury premium poster for '{name}' at {price}. 
-Premium features: {tags}. Weight: {weight}.
-Design requirements: Elegant gold/black color scheme, premium fonts, 
-sophisticated layout, high-end product presentation, luxury brand aesthetics.""",
-            
-            "modern": """Create a contemporary, trendy poster for '{name}' priced at {price}. 
-Modern features: {tags}. Weight: {weight}.
-Design requirements: Current design trends, fresh color combinations, 
-modern typography, innovative layout, Instagram-ready aesthetic."""
-        }
-        
-        # Get template or default to professional
-        template = style_templates.get(poster_style, style_templates["professional"])
-        
-        # Format the prompt with product data
-        formatted_prompt = template.format(
-            name=product.get("product_name", "Product"),
-            price=product.get("price", "Price not available"),
-            tags=product.get("tags", "Premium quality product"),
-            weight=product.get("weight", ""),
-            status=product.get("status", "")
-        )
-        
-        # Add additional context for better poster generation
-        enhanced_prompt = f"""{formatted_prompt}
+        # Create optimized prompt template for marketing posters
+        prompt_template = f"""Create a professional marketing poster by looking at the product details and user prompt below. Make sure you also look at the User Prompt and follow it as well.
 
-Additional Context:
-- Product ID: {product.get("item_id", "")}
-- Availability: {product.get("status", "Available")}
-- Stock: {product.get("quantity", "")} units
-- Create a marketing poster suitable for social media, print, and digital advertising
-- Include all text elements clearly readable
-- Make the product the hero of the design
-- Ensure pricing is prominently displayed"""
+Look at the product details below and create a clean, professional marketing poster for that product. Looking at the product details, smartly look for necessary information to create the poster like look for product name, price, features, weight, tags, etc. Anything that should be in the poster.
+
+Create a marketing poster suitable for social media, print, and digital advertising. Include all text elements clearly readable. Make the product the hero of the design.
+
+Design requirements: Modern typography, elegant layout, corporate decent colors (look at the image that you have to decide which colors to use), professional product photography style, clear pricing display, minimalist design elements.
+
+Product details:
+{product}
+
+User Prompt:
+{user_prompt}"""
         
-        logger.info(f"Marketing: Prompt structured successfully for '{product.get('product_name')}'")
+        logger.info(f"Marketing: Prompt structured successfully for '{product.get('Product Name', 'Unknown Product')}'")
         
         return json.dumps({
             "success": True,
-            "prompt": enhanced_prompt,
-            "style": poster_style,
-            "product_name": product.get("product_name"),
-            "has_product_image": bool(product.get("media")),
-            "product_image_url": product.get("media", ""),
-            "message": f"Prompt created for {poster_style} style poster"
+            "prompt": prompt_template,
+            "product_name": product.get("Product Name"),
+            "has_product_image": bool(product.get("Media")),
+            "product_image_url": product.get("Media", ""),
+            "message": f"Prompt created for {product.get('Product Name', 'Unknown Product')} Poster Generation"
         })
         
     except json.JSONDecodeError:
@@ -2527,10 +2519,17 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
     Generate marketing poster using Gemini 2.5 Flash Image API.
     Can work with prompt-only or prompt + existing product image from Google Sheets.
     
+    Images are ALWAYS saved as PNG files to avoid long base64 strings in responses.
+    Returns filenames instead of base64 data for better performance and usability.
+    
     Parameters:
     - prompt: Marketing prompt for poster generation
     - product_image_url: Optional product image URL from Media column
-    - output_format: "base64" (default) or "file"
+    - output_format: "base64" saves additional .txt file with base64 data, "file" saves PNG only
+    
+    Returns:
+    - generated_images: List of PNG filenames created
+    - base64_files: List of .txt files with base64 data (if output_format="base64")
     """
     logger.info(f"Marketing: Generating poster image with Gemini API")
     
@@ -2620,6 +2619,7 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
             
             # Process response
             generated_images = []
+            base64_files_created = []
             text_response = ""
             
             for part in response.candidates[0].content.parts:
@@ -2627,28 +2627,42 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
                     text_response = part.text
                     logger.info("Marketing: Received text description from Gemini")
                 elif part.inline_data is not None:
-                    # Convert image to requested format
+                    # Always save image to file to avoid long base64 strings in response
                     image = Image.open(BytesIO(part.inline_data.data))
                     
+                    # Generate unique filename with timestamp
+                    timestamp = int(time.time())
+                    filename = f"poster_{timestamp}.png"
+                    
+                    # Save the image file
+                    image.save(filename)
+                    generated_images.append(filename)
+                    logger.info(f"Marketing: Image saved as {filename}")
+                    
+                    # If user specifically requested base64, save to external file like view_poster.py
                     if output_format == "base64":
-                        # Convert to base64 for easy transmission
+                        # Save base64 data to external file for viewing later if needed
                         buffered = BytesIO()
                         image.save(buffered, format="PNG")
                         img_base64 = base64.b64encode(buffered.getvalue()).decode()
-                        generated_images.append(f"data:image/png;base64,{img_base64}")
-                        logger.info("Marketing: Image converted to base64 format")
-                    else:
-                        # Save to file
-                        filename = f"poster_{int(time.time())}.png"
-                        image.save(filename)
-                        generated_images.append(filename)
-                        logger.info(f"Marketing: Image saved as {filename}")
+                        base64_data = f"data:image/png;base64,{img_base64}"
+                        
+                        # Save base64 to external file like poster_data.txt
+                        base64_filename = f"poster_base64_{timestamp}.txt"
+                        with open(base64_filename, 'w') as f:
+                            f.write(base64_data)
+                        base64_files_created.append(base64_filename)
+                        logger.info(f"Marketing: Base64 data saved to {base64_filename}")
+                    
+                    # Always return the filename instead of base64 string
             
             logger.info("Marketing: Poster generated successfully with Gemini API")
             
             return json.dumps({
                 "success": True,
                 "generated_images": generated_images,
+                "generated_files": generated_images,  # Always contains PNG filenames now
+                "base64_files": base64_files_created,  # Contains base64 data files if requested
                 "description": text_response or "Marketing poster generated successfully",
                 "prompt_used": prompt,
                 "has_product_image": bool(product_image_url),
@@ -2661,7 +2675,9 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
                 "fallback_used": False,
                 "quota_exhausted": False,
                 "is_text_only_response": len(generated_images) == 0 and text_response is not None,
-                "message": f"✅ Poster generated successfully using {model_used or primary_model}"
+                "image_handling": "saved_as_files",
+                "output_format_requested": output_format,
+                "message": f"✅ Poster generated successfully using {model_used or primary_model}. Images saved as: {', '.join(generated_images)}"
             })
             
         except ImportError:
