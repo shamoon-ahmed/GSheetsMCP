@@ -179,6 +179,8 @@ In addition to order management, this MCP server includes **3 powerful marketing
 
 ## 🛠️ **Marketing Tools (3 Additional Tools)**
 
+The marketing agent will use total 4 tools. `google_sheets_query_tool` which is already made. And new tools below
+
 ### **🔍 Product Search Tool**
 
 8. **`search_product_tool`**

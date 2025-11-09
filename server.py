@@ -777,7 +777,7 @@ def google_sheets_query_tool(query: str) -> str:
     """
     logger.info(f"Product query from agent: {query}")
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"error": "no_connection_configured"})
     
