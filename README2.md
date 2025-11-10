@@ -181,6 +181,15 @@ In addition to order management, this MCP server includes **3 powerful marketing
 
 The marketing agent will use total 4 tools. `google_sheets_query_tool` which is already made. And new tools below
 
+<br>
+
+The flow is:
+- User says "Create a promotional poster for lavender lotion. It should be forest themed."
+The agent will first use the `google_sheets_query_tool` to get all the products data in the inventory.
+- Agent sees the correct name is "Lavender Body Lotion" and passes it into `search_product_tool` to get all the details of that specific product.
+- Then it uses `prompt_structure_tool` and passes the product details it got from the output of `search_product_tool` and it passes the main query from the user as the user prompt.
+- Now that the agent has the prompt to generate images, it passes that prompt into `generate_images_tool` and generates the promotional poster for Lavender Body Lotion and also a social media caption.
+
 ### **🔍 Product Search Tool**
 
 8. **`search_product_tool`**
@@ -200,15 +209,9 @@ The marketing agent will use total 4 tools. `google_sheets_query_tool` which is 
    - **Purpose:** Create optimized marketing prompts for AI poster generation
    - **Input:** Product details JSON + poster style preference
    - **Output:** Professional marketing prompt optimized for Gemini AI
-   - **Available Styles:**
-     - `professional` - Clean, corporate design with navy/white/gold colors
-     - `vibrant` - Bold, energetic with bright colors and dynamic shapes
-     - `minimal` - Sophisticated, clean lines with premium typography
-     - `luxury` - Elegant gold/black color schemes for premium products
-     - `modern` - Contemporary, trendy designs for Instagram-ready aesthetics
    - **Example Usage:**
      ```json
-     prompt_structure_tool(product_details, "professional")
+     prompt_structure_tool(product_details, user_prompt)
      → Returns: Structured marketing prompt with design requirements
      ```
 
@@ -227,7 +230,7 @@ The marketing agent will use total 4 tools. `google_sheets_query_tool` which is 
     - **Example Usage:**
       ```json
       generate_images_tool(marketing_prompt, product_image_url, "base64")
-      → Returns: Generated poster as base64 image data
+      → Returns: Generated poster as base64 image data and a social media caption
       ```
 
 ## 🎯 **Marketing Workflow**
@@ -245,6 +248,7 @@ The marketing agent will use total 4 tools. `google_sheets_query_tool` which is 
 3. **🖼️ Image Generation** → `generate_images_tool(prompt, media_url)`
    - Generates professional poster using Gemini AI
    - Combines product data with AI-powered design
+   - Generates a social media caption as well
 
 ### **End-to-End Example:**
 ```
@@ -257,7 +261,7 @@ Input: "Create a professional poster for Coconut Lip Balm"
    → "Create a clean, professional marketing poster for 'Coconut Lip Balm' priced at 400..."
 
 3. Generate: generate_images_tool(marketing_prompt, product_image_url)
-   → Base64 encoded professional poster image
+   → Base64 encoded professional poster image with caption
 ```
 
 ## ⚙️ **Marketing Setup Requirements**

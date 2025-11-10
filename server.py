@@ -37,20 +37,15 @@ logging.getLogger("mcp").setLevel(logging.DEBUG)
 logging.getLogger("mcp.server").setLevel(logging.DEBUG)
 logging.getLogger("fastmcp").setLevel(logging.DEBUG)
 
-CLIENT_SECRET_FILE = os.path.join(os.path.dirname(__file__), "google_client_secret.json")
-with open(CLIENT_SECRET_FILE, 'r') as f:
-    client_secrets = json.load(f)
-
-GOOGLE_CLIENT_ID = client_secrets["web"]["client_id"]
-GOOGLE_CLIENT_SECRET = client_secrets["web"]["client_secret"]
+GOOGLE_CLIENT_ID = os.getenv("GOOGLE_CLIENT_ID")
+GOOGLE_CLIENT_SECRET = os.getenv("GOOGLE_CLIENT_SECRET")
+GOOGLE_REFRESH_TOKEN = os.getenv("GOOGLE_REFRESH_TOKEN")
 
 mcp = FastMCP(
     name="Google Sheets MCP",
     stateless_http=True,
 )
 
-# Simple connection file path
-CONN_FILE = os.path.join(os.path.dirname(__file__), "connection.json")
 FERNET_KEY = os.getenv("FERNET_KEY")
 
 def decrypt_if_needed(token_enc: str) -> str:
@@ -61,53 +56,6 @@ def decrypt_if_needed(token_enc: str) -> str:
     # Encryption disabled for development
     logger.debug("Encryption disabled, returning token as-is")
     return token_enc
-
-def load_connection():
-    """
-    Load connection data from simple connection.json file.
-    """
-    logger.debug(f"Loading connection from: {CONN_FILE}")
-    
-    if not os.path.exists(CONN_FILE):
-        logger.error(f"Connection file does not exist: {CONN_FILE}")
-        logger.info(f"Please create {CONN_FILE} with your Google Sheets configuration")
-        return None
-    
-    logger.debug("Connection file exists, loading...")
-    try:
-        with open(CONN_FILE, "r") as f:
-            data = json.load(f)
-        logger.debug(f"Connection file loaded successfully. Keys: {list(data.keys())}")
-        
-        # Handle both old and new format
-        if "inventory" in data and "orders" in data:
-            # New dual-sheet format
-            logger.debug("Dual-sheet configuration detected")
-            if "refresh_token" in data:
-                data["refresh_token"] = decrypt_if_needed(data["refresh_token"])
-            return data
-        elif "sheet_id" in data:
-            # Old single-sheet format - convert to new format
-            logger.debug("Single-sheet configuration detected, converting...")
-            new_data = {
-                "inventory": {
-                    "workbook_id": data["sheet_id"],
-                    "worksheet_name": "Sheet1"  # Default assumption
-                },
-                "orders": {
-                    "workbook_id": data["sheet_id"],
-                    "worksheet_name": "Orders"  # Default assumption
-                },
-                "refresh_token": decrypt_if_needed(data.get("refresh_token"))
-            }
-            return new_data
-        else:
-            logger.error("Invalid connection file format")
-            return None
-            
-    except Exception as e:
-        logger.error(f"Failed to load connection file: {e}")
-        return None
 
 def load_env_connection():
     """Load connection data from environment variables"""
@@ -382,7 +330,7 @@ def get_sheet_data(service, workbook_id, worksheet_name, conn_data=None):
     }
 
 @mcp.tool()
-def process_customer_order_tool(customer_name: str, product_name: str, quantity: int, customer_email: str = "", notes: str = "", customer_address: str = "", payment_mode: str = "") -> str:
+def process_customer_order_tool(customer_name: str, product_name: str, quantity: int, customer_email: str = "", customer_address: str = "", payment_mode: str = "") -> str:
     """
     Complete end-to-end order processing with dynamic schema analysis.
     Automatically detects orders sheet columns and fills them with inventory data or provided customer data.
@@ -427,7 +375,7 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
     logger.info(f"Processing new order: {order_key}")
     process_customer_order_tool._recent_orders[order_key] = current_time
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -526,7 +474,6 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
             "customer_email": customer_email,
             "customer_address": customer_address,
             "payment_mode": payment_mode,
-            "notes": notes,
             "quantity": str(quantity),
             "status": "Pending",  # Status starts as Pending for new orders
             "order_id": f"ORD-{int(time.time())}"
@@ -616,8 +563,6 @@ def process_customer_order_tool(customer_name: str, product_name: str, quantity:
             # If still not filled, try remaining customer data fields
             if not filled:
                 remaining_customer_mappings = {
-                    "notes": customer_provided_data["notes"],
-                    "note": customer_provided_data["notes"],
                     "quantity": customer_provided_data["quantity"],
                     "qty": customer_provided_data["quantity"],
                     "status": customer_provided_data["status"],
@@ -819,7 +764,7 @@ def update_customer_order_tool(order_id: str, new_product_name: str = "", new_qu
     """
     logger.info(f"Updating order: {order_id}")
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -1184,7 +1129,7 @@ def cancel_customer_order_tool(order_id: str) -> str:
     """
     logger.info(f"Cancelling order: {order_id}")
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -1372,7 +1317,7 @@ def cancel_customer_order_tool(order_id: str) -> str:
         })
 
 @mcp.tool()
-def process_multiple_products_order_tool(customer_name: str, products_list: str, customer_email: str = "", notes: str = "", customer_address: str = "", payment_mode: str = "") -> str:
+def process_multiple_products_order_tool(customer_name: str, products_list: str, customer_email: str = "", customer_address: str = "", payment_mode: str = "") -> str:
     """
     Process customer orders with MULTIPLE products/items at once in a single order.
     Perfect for real-world scenarios: food orders (pizza+fries+coke), skincare bundles, wardrobe combinations, etc.
@@ -1414,7 +1359,7 @@ def process_multiple_products_order_tool(customer_name: str, products_list: str,
     # Record this order
     process_multiple_products_order_tool._recent_orders[order_key] = current_time
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -1633,7 +1578,6 @@ def process_multiple_products_order_tool(customer_name: str, products_list: str,
             "customer_email": customer_email,
             "customer_address": customer_address,
             "payment_mode": payment_mode,
-            "notes": notes,
             "status": "Pending",
             "order_id": order_id,
             "products": products_names_str,  # Consolidated products
@@ -1671,8 +1615,6 @@ def process_multiple_products_order_tool(customer_name: str, products_list: str,
                 value = customer_address
             elif any(term in clean_header for term in ["payment", "mode"]):
                 value = payment_mode
-            elif any(term in clean_header for term in ["notes", "note"]):
-                value = notes
             elif any(term in clean_header for term in ["status"]):
                 value = "Pending"
             elif any(term in clean_header for term in ["order_id", "order_no", "order"]):
@@ -1762,7 +1704,7 @@ def update_multiple_products_order_tool(order_id: str, new_products_list: str = 
     """
     logger.info(f"Updating multiple products order: {order_id}")
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -2142,7 +2084,7 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
     """
     logger.info(f"Cancelling multiple products order: {order_id}")
     
-    conn = load_connection()
+    conn = load_env_connection()
     if not conn:
         return json.dumps({"success": False, "error": "no_connection_configured"})
     
@@ -2556,8 +2498,28 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
             # Initialize Gemini client
             client = genai.Client(api_key=gemini_api_key)
             
+            # Enhance prompt to request social media caption alongside image
+            enhanced_prompt = f"""{prompt}
+
+CRITICAL INSTRUCTION FOR CAPTION:
+After creating the poster image, provide an Instagram/social media caption for this product.
+
+STRICT RULES FOR CAPTION:
+1. Start DIRECTLY with the caption text - NO introductory phrases
+2. DO NOT include prefixes like "Here's a caption:", "Caption:", "**Caption:**", etc.
+3. DO NOT include separators like "---"
+4. Just write the actual caption text that would be posted
+5. Include relevant hashtags at the end
+6. Keep it engaging, concise, and ready to copy-paste
+
+Example of what to provide:
+✨ Discover amazing skin! This product will transform your routine...
+#Beauty #Skincare #Glow
+
+(Just like that - nothing before the actual caption)"""
+            
             # Prepare content for generation
-            contents = [prompt]
+            contents = [enhanced_prompt]
             
             # If product image URL is provided, fetch and include it
             product_image_status = "no_image"
@@ -2663,11 +2625,37 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
             
             logger.info("Marketing: Poster generated successfully with Gemini API")
             
+            # Generate social media caption from AI response or create fallback
+            # Clean up the caption by removing any instructional prefixes
+            raw_caption = text_response.strip() if text_response else ""
+            
+            # Use regex to remove any instruction text before the actual caption
+            import re
+            
+            # Step 1: Remove everything up to the last "Caption:" or similar instruction
+            social_media_caption = re.sub(
+                r'^.*?(?:\*\*)?(?:caption|instagram|social\s+media):?\*\*?\s*\n*',
+                '',
+                raw_caption,
+                flags=re.IGNORECASE
+            ).strip()
+            
+            # Step 2: Remove any markdown separators
+            social_media_caption = re.sub(r'^-+\s*\n*', '', social_media_caption).strip()
+            
+            # Step 3: Remove leading/trailing markdown bold markers if present
+            social_media_caption = re.sub(r'^\*\*|\*\*$', '', social_media_caption).strip()
+            
+            # Fallback if no caption generated
+            if not social_media_caption or len(social_media_caption) < 10:
+                social_media_caption = "Check out this amazing product! 🌟 #NewArrival #MustHave"
+            
             return json.dumps({
                 "success": True,
                 "generated_images": generated_images,
                 "generated_files": generated_images,  # Always contains PNG filenames now
                 "base64_files": base64_files_created,  # Contains base64 data files if requested
+                "caption": social_media_caption,  # AI-generated social media caption with hashtags
                 "description": text_response or "Marketing poster generated successfully",
                 "prompt_used": prompt,
                 "has_product_image": bool(product_image_url),
@@ -2682,6 +2670,7 @@ def generate_images_tool(prompt: str, product_image_url: str = "", output_format
                 "is_text_only_response": len(generated_images) == 0 and text_response is not None,
                 "image_handling": "saved_as_files",
                 "output_format_requested": output_format,
+                "has_social_caption": bool(text_response),
                 "message": f"✅ Poster generated successfully using {model_used or primary_model}. Images saved as: {', '.join(generated_images)}"
             })
             
