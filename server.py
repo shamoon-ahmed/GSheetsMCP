@@ -2,12 +2,15 @@ import os, json, time
 import logging
 import requests
 import base64
+import uuid
 from io import BytesIO
 from dotenv import load_dotenv
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 
 import gspread
+import psycopg2
+from imagekitio import ImageKit
 from google.oauth2.credentials import Credentials
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
@@ -70,6 +73,47 @@ def load_env_connection():
         },
         "refresh_token": os.getenv("GOOGLE_REFRESH_TOKEN")
     }
+
+def ensure_poster_table_exists():
+    """
+    Ensure the poster_generations table exists in Neon Postgres database.
+    Creates the table if it doesn't exist.
+    Returns a database connection object.
+    """
+    try:
+        database_url = os.getenv("DATABASE_URL")
+        if not database_url:
+            raise Exception("DATABASE_URL not found in environment variables")
+        
+        # Connect to Neon Postgres
+        conn = psycopg2.connect(database_url, sslmode='require')
+        cursor = conn.cursor()
+        
+        # Create table if not exists
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS poster_generations (
+                id SERIAL PRIMARY KEY,
+                created_date TIMESTAMP DEFAULT NOW(),
+                tenant_id VARCHAR(255) NOT NULL,
+                image_url TEXT NOT NULL,
+                image_caption TEXT
+            );
+        """)
+        
+        # Create index for better query performance
+        cursor.execute("""
+            CREATE INDEX IF NOT EXISTS idx_tenant_date 
+            ON poster_generations(tenant_id, created_date DESC);
+        """)
+        
+        conn.commit()
+        logger.info("Poster generations table ensured to exist")
+        
+        return conn
+        
+    except Exception as e:
+        logger.error(f"Database table creation failed: {e}")
+        raise
 
 def build_sheets_service_from_refresh(refresh_token):
     logger.debug("Building credentials from refresh token...")
@@ -2699,6 +2743,147 @@ Example of what to provide:
             "success": False,
             "error": "generation_failed",
             "message": str(e)
+        })
+
+@mcp.tool()
+def upload_poster_to_imagekit_tool(
+    image_filename: str,
+    tenant_id: str = None,
+    caption: str = ""
+) -> str:
+    """
+    Upload generated poster to ImageKit CDN and save metadata to Neon Postgres database.
+    
+    Production-ready: Reads file, uploads to cloud, saves to database, deletes local file.
+    
+    Parameters:
+    - image_filename: Local PNG filename from generate_images_tool (e.g., "poster_123.png")
+    - tenant_id: User/session identifier (auto-generated if not provided)
+    - caption: Social media caption from generate_images_tool
+    
+    Returns: ImageKit CDN URL and database confirmation
+    
+    Example:
+    upload_poster_to_imagekit_tool(
+        image_filename="poster_1762793854.png",
+        tenant_id="user_shamoon",
+        caption="Amazing skin! 🌿 #AloeVera"
+    )
+    """
+    logger.info(f"Marketing: Uploading poster to ImageKit: {image_filename}")
+    
+    try:
+        # Step 1: Auto-generate tenant_id if not provided
+        if not tenant_id or tenant_id.strip() == "":
+            tenant_id = f"user_{uuid.uuid4().hex[:12]}"
+            logger.info(f"Marketing: Auto-generated tenant_id: {tenant_id}")
+        
+        # Step 2: Check if local file exists
+        if not os.path.exists(image_filename):
+            return json.dumps({
+                "success": False,
+                "error": "file_not_found",
+                "message": f"Image file '{image_filename}' not found locally"
+            })
+        
+        # Step 3: Read file into memory and encode as base64
+        logger.info(f"Marketing: Reading file into memory: {image_filename}")
+        with open(image_filename, 'rb') as file:
+            file_content = file.read()
+        
+        # Encode to base64 string for ImageKit upload
+        import base64
+        file_base64 = base64.b64encode(file_content).decode('utf-8')
+        
+        # Step 4: Initialize ImageKit client
+        imagekit_private_key = os.getenv("IMAGEKIT_PRIVATE_KEY")
+        imagekit_public_key = os.getenv("IMAGEKIT_PUBLIC_KEY")
+        imagekit_url_endpoint = os.getenv("IMAGEKIT_URL_ENDPOINT")
+        
+        if not all([imagekit_private_key, imagekit_public_key, imagekit_url_endpoint]):
+            return json.dumps({
+                "success": False,
+                "error": "missing_imagekit_config",
+                "message": "ImageKit credentials not found in environment variables. Check IMAGEKIT_PRIVATE_KEY, IMAGEKIT_PUBLIC_KEY, IMAGEKIT_URL_ENDPOINT"
+            })
+        
+        imagekit = ImageKit(
+            private_key=imagekit_private_key,
+            public_key=imagekit_public_key,
+            url_endpoint=imagekit_url_endpoint
+        )
+        
+        # Step 5: Upload to ImageKit
+        logger.info(f"Marketing: Uploading to ImageKit CDN with folder: /posters/{tenant_id}/")
+        
+        # Import UploadFileRequestOptions from ImageKit SDK
+        from imagekitio.models.UploadFileRequestOptions import UploadFileRequestOptions
+        
+        # Create proper options object as per ImageKit SDK documentation
+        upload_options = UploadFileRequestOptions(
+            folder=f"/posters/{tenant_id}/",
+            use_unique_file_name=True,
+            tags=["marketing", "poster", "auto-generated"]  # List of strings
+        )
+        
+        upload_result = imagekit.upload_file(
+            file=file_base64,  # Use base64-encoded string
+            file_name=image_filename,
+            options=upload_options
+        )
+        
+        # Handle response (ImageKit SDK returns UploadFileResult object)
+        imagekit_url = upload_result.url
+        imagekit_file_id = upload_result.file_id
+        
+        logger.info(f"Marketing: Successfully uploaded to ImageKit: {imagekit_url}")
+        
+        # Step 6: Ensure database table exists and get connection
+        conn = ensure_poster_table_exists()
+        cursor = conn.cursor()
+        
+        # Step 7: Save metadata to database
+        logger.info(f"Marketing: Saving metadata to Neon Postgres database")
+        
+        cursor.execute("""
+            INSERT INTO poster_generations 
+            (tenant_id, image_url, image_caption)
+            VALUES (%s, %s, %s)
+        """, (tenant_id, imagekit_url, caption))
+        
+        conn.commit()
+        cursor.close()
+        conn.close()
+        
+        logger.info(f"Marketing: Database record saved successfully")
+        
+        # Step 8: Delete local file (production-ready, stateless)
+        local_file_deleted = False
+        try:
+            os.remove(image_filename)
+            local_file_deleted = True
+            logger.info(f"Marketing: Deleted local file: {image_filename}")
+        except Exception as delete_error:
+            logger.warning(f"Marketing: Could not delete local file {image_filename}: {delete_error}")
+        
+        # Step 9: Return success response
+        return json.dumps({
+            "success": True,
+            "imagekit_url": imagekit_url,
+            "imagekit_file_id": imagekit_file_id,
+            "tenant_id": tenant_id,
+            "caption": caption,
+            "local_file_deleted": local_file_deleted,
+            "folder": f"/posters/{tenant_id}/",
+            "message": f"✅ Poster uploaded to ImageKit and saved to database. CDN URL ready!"
+        })
+        
+    except Exception as e:
+        logger.error(f"Marketing: Poster upload failed: {e}")
+        return json.dumps({
+            "success": False,
+            "error": "upload_failed",
+            "message": f"Failed to upload poster: {str(e)}"
         })
 
 # ========================================

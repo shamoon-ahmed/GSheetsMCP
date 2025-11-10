@@ -11,8 +11,10 @@ dependencies = [
     "google-auth-oauthlib>=1.2.2",
     "google-genai>=1.49.0",
     "gspread>=6.2.1",
+    "imagekitio>=4.2.0",
     "openai>=2.6.1",
     "openai-agents>=0.4.0",
     "pillow>=12.0.0",
+    "psycopg2-binary>=2.9.11",
     "uvicorn[standard]>=0.38.0",
 ]
