@@ -604,4 +604,4 @@ Your **orders sheet** must include customer email addresses in any of these colu
 
 ---
 
-*The email marketing tools complete the business automation suite, providing end-to-end customer engagement from order processing to visual content creation to automated email campaigns. This creates a comprehensive solution for modern e-commerce and retail businesses.*
+*The email marketing tools complete the business automation suite, providing end-to-end customer engagement from order processing to visual content creation to automated email campaigns. This creates a comprehensive solution for modern e-commerce and retail businesses.* 
