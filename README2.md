@@ -53,7 +53,9 @@ Your orders sheet should contain these column types:
 | **Total** | `Subtotal (PKR)`, `Total`, `Amount` | Order total |
 | **Status** | `Status`, `Order Status` | Order state |
 
-## 🛠️ **Available Tools (7 Total)**
+## 🛠️ **Available Tools (13 Total)**
+
+**Order Management (7 tools)** → **Marketing Automation (3 tools)** → **Email Marketing (3 tools)**
 
 ### **🔍 Query & Information Tools**
 
@@ -333,130 +335,169 @@ Your inventory sheet should include these additional columns for marketing:
 
 # 📧 Email Marketing Automation Tools
 
-This README is AI generated but what exactly happening is:
-- when sending email for approval to business owner's email, it doesn't send complete email design.
-- and when sending it to all customer's email, it sends raw html or bad format. not the real designed email
- 
--------------------------
-Building on the poster generation capabilities, this MCP server includes **4 advanced email marketing tools** that create, approve, and send AI-powered email campaigns to your customers. These tools provide complete email marketing automation with professional design and approval workflows.
+Building on the poster generation capabilities, this MCP server includes **3 email marketing tools** that create, approve, and send professional HTML email campaigns to your customers. These tools provide complete email marketing automation with a beautiful dark-themed design and approval workflows.
 
-## 🛠️ **Email Marketing Tools (4 Additional Tools)**
+## 🛠️ **Email Marketing Tools (3 Additional Tools)**
 
-### **✍️ AI Email Content Generation**
+The Agent will also use the `google_sheets_query_tool` to get the correct product name, price and image url so that correct arguments are passed in `email_content_tool`
 
-11. **`generate_email_content_tool`**
-    - **Purpose:** Generate professional HTML email templates using OpenAI GPT-4o
-    - **Input:** Product details + email style + business branding
+<br>
+
+So basically, email marketing has 4 tools in total.
+
+### **✍️ Email Content Generation**
+
+11. **`email_content_tool`**
+    - **Purpose:** Generate professional dark-themed HTML email templates for product campaigns
+    - **Input:** Product name + price + image URL + shop link + company name
     - **Output:** Complete responsive HTML email with subject line
-    - **Email Styles:**
-      - `promotional` - Sales-focused with clear CTAs and pricing emphasis
-      - `newsletter` - Informative content with product highlights
-      - `sale` - Discount-focused with urgency and savings messaging
-      - `announcement` - New product launches and company updates
-    - **Features:**
-      - Mobile-responsive table-based HTML layout
+    - **Design Features:**
+      - Dark theme (#1a1a1a background) with pink accents (#ff99aa)
+      - Mobile-responsive table-based layout (600px width)
+      - Professional product image display with rounded corners
+      - Clear call-to-action "Shop Now" button
       - Inline CSS for maximum email client compatibility
-      - Automatic subject line generation
-      - Template fallback when AI is unavailable
+      - Automatic subject line generation with emoji
     - **Example Usage:**
       ```json
-      generate_email_content_tool(product_details, "promotional", "", "", "MY SKINCARE!")
-      → Returns: Complete HTML email + subject line ready for approval
+      email_content_tool("Lavender Body Lotion", "1600", "https://image-url.com/product.jpg", "https://shop.com", "SahulatAI SkinCare")
+      → Returns: {
+           "success": true,
+           "email_content": "<html>...",
+           "email_subject": "✨ Introducing Lavender Body Lotion - Just for 1600!",
+           "product_featured": "Lavender Body Lotion",
+           "ready_for_approval": true
+         }
       ```
 
 ### **👔 Email Design Approval System**
 
 12. **`get_email_design_approval_tool`**
-    - **Purpose:** Send email previews to business owner for campaign approval
-    - **Input:** HTML email content + subject line + owner email
-    - **Output:** Professional approval email with visual preview and instructions
+    - **Purpose:** Send email preview to business owner for campaign approval before mass sending
+    - **Input:** HTML email content + subject line + owner email + optional approval message
+    - **Output:** Approval email sent with campaign preview and instructions
     - **Features:**
-      - **Smart Content Extraction** - Automatically detects product names, prices, features
-      - **Visual Email Preview** - Shows both summary cards and actual HTML rendering
-      - **Approval Instructions** - Clear respond-with options (APPROVED/REVISE/CANCEL)
-      - **Mobile-Friendly Preview** - Responsive design preview display
-      - **Currency Support** - Properly handles ₹, $, € symbols in content
+      - **Full Campaign Preview** - Shows actual email design that customers will receive
+      - **Approval Instructions Banner** - Blue header with clear approval/cancel options
+      - **Visual Markers** - Green banners above/below campaign preview
+      - **Simple Response System** - Reply "APPROVED" or "CANCEL" to the email
+      - **Dual Delivery** - Gmail API primary, SMTP fallback for reliability
+      - **Auto-Fix Technology** - Automatically handles HTML escaping issues
     - **Approval Options:**
-      - Reply "APPROVED" → Campaign ready to send
-      - Reply "CANCEL" → Campaign cancelled
-      - Reply with changes → "make text bigger, change color to blue"
+      - Reply "APPROVED" → Proceed to mass sending with send_emails_tool
+      - Reply "CANCEL" → Campaign cancelled, no emails sent
     - **Example Usage:**
       ```json
-      get_email_design_approval_tool(email_html, subject, "owner@business.com", "Please review this Aloe Vera campaign")
-      → Sends approval email with preview and instructions
+      get_email_design_approval_tool(email_html, "✨ Introducing Lavender Body Lotion - Just for 1600!", "owner@business.com", "Please review")
+      → Sends approval email with full campaign preview
       ```
 
 ### **📬 Mass Email Campaign Delivery**
 
 13. **`send_emails_tool`**
     - **Purpose:** Send approved email campaigns to all customers from orders database
-    - **Input:** Approved email content + campaign details
-    - **Output:** Campaign delivery report with success/failure metrics
+    - **Input:** Approved email content + subject line + sender email + campaign name + test mode
+    - **Output:** Campaign delivery report with success/failure statistics
     - **Features:**
-      - **Customer Email Extraction** - Automatically finds customer emails from orders sheet
-      - **Dual Delivery Methods** - Gmail API primary, SMTP fallback
+      - **Automatic Customer Extraction** - Finds all customer emails from orders sheet
+      - **Dual Delivery Methods** - Gmail API primary, SMTP fallback for each email
+      - **Test Mode** - Send to sender email only for testing before full campaign
       - **Campaign Tracking** - Unique campaign IDs and delivery statistics
-      - **Test Mode** - Send to sender only for testing before mass delivery
-      - **Rate Limiting** - Prevents email service throttling
-      - **Error Handling** - Graceful failure recovery with fallback delivery
+      - **Rate Limiting** - 0.1s delay between sends to prevent throttling
+      - **Error Handling** - Graceful failure recovery with automatic SMTP fallback
+      - **Auto-Fix Technology** - Handles HTML escaping issues automatically
     - **Delivery Methods:**
-      - Gmail API (primary) - High deliverability, bulk sending
-      - SMTP Fallback - Gmail app password authentication
+      - Gmail API (primary) - High deliverability, OAuth2 authentication
+      - SMTP Fallback (automatic) - Gmail app password, TLS encryption
     - **Example Usage:**
       ```json
-      send_emails_tool(approved_html, "Special Offer: Aloe Vera Gel ₹950!", "business@email.com", "Aloe Vera Campaign", false)
-      → Sends to all customers, returns delivery report
+      send_emails_tool(approved_html, "✨ Introducing Lavender Body Lotion - Just for 1600!", "business@gmail.com", "Lavender Campaign", false)
+      → Sends to all customers, returns: {
+           "success": true,
+           "emails_sent": 47,
+           "failed_emails": 0,
+           "campaign_id": "CAMP_1731334567",
+           "message": "Successfully sent to 47 customers!"
+         }
       ```
 
 ## 🎯 **Complete Email Marketing Workflow**
 
-### **End-to-End Campaign Process:**
+### **3-Step Campaign Process:**
 
-1. **📧 Content Generation** → `generate_email_content_tool()`
-   - AI creates professional HTML email with your product
-   - Includes mobile-responsive design and clear call-to-actions
-   - Generates compelling subject line automatically
+1. **📧 Generate Email Content** → `email_content_tool()`
+   - Creates professional dark-themed HTML email
+   - Includes product image, pricing, features, and Shop Now button
+   - Generates compelling subject line with emoji
+   - Returns JSON with email_content and email_subject
 
-2. **👀 Design Approval** → `get_email_design_approval_tool()`
-   - Sends preview to business owner via email
-   - Shows visual email preview with extracted promotional info
-   - Provides simple approval/revision workflow
+2. **👀 Get Design Approval** → `get_email_design_approval_tool()`
+   - Sends preview email to business owner
+   - Shows full campaign design with approval instructions
+   - Owner replies "APPROVED" or "CANCEL"
+   - Validates campaign before mass sending
 
-3. **🚀 Campaign Delivery** → `send_emails_tool()`
-   - Sends approved email to all customers
+3. **🚀 Send Campaign** → `send_emails_tool()`
+   - Sends approved email to all customers from orders sheet
    - Tracks delivery success and generates reports
-   - Handles errors and provides fallback delivery
+   - Provides campaign ID and delivery statistics
+   - Optional test mode to send to yourself first
 
 ### **Real Campaign Example:**
 ```
-Scenario: Launch campaign for Aloe Vera Gel (₹950)
+Scenario: Launch email campaign for Lavender Body Lotion (1600)
 
-1. Generate Content:
-   generate_email_content_tool(aloe_product_data, "promotional", "", "", "MY SKINCARE!")
-   → Creates professional email with product image, benefits, pricing, CTA
+Step 1 - Generate Content:
+   email_content_tool("Lavender Body Lotion", "1600", "https://product-image.jpg", "https://shop.com", "SahulatAI SkinCare")
+   
+   Returns:
+   {
+     "success": true,
+     "email_content": "<!DOCTYPE html><html>...[Dark themed HTML with product]...",
+     "email_subject": "✨ Introducing Lavender Body Lotion - Just for 1600!",
+     "product_featured": "Lavender Body Lotion",
+     "ready_for_approval": true
+   }
 
-2. Get Approval:
-   get_email_design_approval_tool(email_html, "Special Offer: Aloe Vera Gel ₹950!", "owner@email.com")
-   → Owner receives preview email with:
-     - Product: "Aloe Vera Gel"  
-     - Price: "₹950"
-     - Features: ["Soothing", "Hydration", "Cooling"]
-     - Visual HTML preview
+Step 2 - Get Approval:
+   get_email_design_approval_tool(
+     email_content,  // HTML from step 1
+     email_subject,  // Subject from step 1
+     "owner@business.com"
+   )
+   
+   Result: Owner receives email with:
+   - Blue approval instructions banner at top
+   - Full campaign preview (dark theme with product image, price, button)
+   - Reply options: "APPROVED" or "CANCEL"
 
-3. Send Campaign (after "APPROVED" reply):
-   send_emails_tool(approved_html, subject, "business@email.com", "Aloe Vera Launch")
-   → Delivers to all customers: "✅ Successfully sent to 47 customers!"
+Step 3 - Send Campaign (after owner replies "APPROVED"):
+   send_emails_tool(
+     email_content,  // Same HTML from step 1
+     email_subject,  // Same subject from step 1
+     "business@gmail.com",
+     "Lavender Launch Campaign",
+     false  // Not test mode, send to all customers
+   )
+   
+   Returns:
+   {
+     "success": true,
+     "emails_sent": 47,
+     "failed_emails": 0,
+     "campaign_id": "CAMP_1731334567",
+     "total_customers": 47,
+     "delivery_status": "completed",
+     "message": "Successfully sent ✨ Introducing Lavender Body Lotion - Just for 1600! to 47 customers!"
+   }
 ```
 
 ## ⚙️ **Email Marketing Setup Requirements**
 
 ### **Environment Configuration:**
 ```env
-# OpenAI for email content generation
-OPENAI_API_KEY=your_openai_api_key_here
-
-# Gmail configuration for sending
-GOOGLE_REFRESH_TOKEN=your_refresh_token
+# Gmail configuration for sending emails
+GOOGLE_REFRESH_TOKEN=your_google_refresh_token
 SMTP_SERVER=smtp.gmail.com
 SMTP_PORT=587
 SMTP_USERNAME=your_email@gmail.com
@@ -464,46 +505,59 @@ GMAIL_APP_PASSWORD=your_gmail_app_password
 
 # Existing inventory/orders config
 ORDERS_SHEET_ID=your_orders_sheet_id
-ORDERS_WORKSHEET_NAME=your_orders_worksheet_name
+ORDERS_WORKSHEET_NAME=Orders
+GOOGLE_CLIENT_ID=your_google_client_id
+GOOGLE_CLIENT_SECRET=your_google_client_secret
 ```
 
 ### **Customer Email Requirements:**
 Your **orders sheet** must include customer email addresses in any of these column formats:
 - `customer_email`, `email`, `customer email`, `Email`, `Customer Email`
 
-**Example Orders Sheet with Email Marketing Support:**
+**Example Orders Sheet for Email Marketing:**
 ```
-| Order No | Item Name     | Customer Name | Customer Email        | Address      | Status |
-|----------|---------------|---------------|-----------------------|--------------|--------|
-| ORD-001  | Aloe Vera Gel | John Doe      | john@email.com        | City ABC     | Delivered |
-| ORD-002  | Face Cream    | Jane Smith    | jane.smith@email.com  | Town XYZ     | Pending |
+| Order No | Product Name  | Quantity | Customer Name | Customer Email        | Address      | Status    |
+|----------|---------------|----------|---------------|-----------------------|--------------|-----------|
+| ORD-001  | Face Wash     | 2        | John Doe      | john@email.com        | City ABC     | Delivered |
+| ORD-002  | Body Lotion   | 1        | Jane Smith    | jane.smith@gmail.com  | Town XYZ     | Pending   |
+| ORD-003  | Facial Serum  | 3        | Bob Johnson   | bob.j@email.com       | Village 123  | Delivered |
 ```
+
+### **Gmail App Password Setup:**
+1. Go to Google Account Settings → Security → 2-Step Verification
+2. Scroll to "App passwords" at the bottom
+3. Create new app password for "Mail"
+4. Copy the 16-character password
+5. Add to `.env` file as `GMAIL_APP_PASSWORD`
 
 ## 📊 **Email Marketing Features**
 
-### **🎨 Professional Email Design**
-- **Mobile-Responsive Layout** - Works on all devices and email clients
-- **Table-Based Structure** - Maximum compatibility with Gmail, Outlook, Apple Mail
-- **Inline CSS Styling** - No external dependencies, renders everywhere
-- **Email-Optimized Images** - Proper scaling and fallbacks
+### **🎨 Beautiful Dark Theme Design**
+- **Modern Dark Aesthetic** - #1a1a1a background with pink (#ff99aa) accents
+- **Mobile-Responsive Layout** - Table-based structure, 600px width, works on all devices
+- **Email Client Compatible** - Inline CSS styling, no external dependencies
+- **Professional Product Display** - Large product images with rounded corners
+- **Clear Call-to-Action** - Prominent "Shop Now" button with hover-friendly styling
 
-### **🤖 AI-Powered Content Creation**
-- **OpenAI GPT-4o Integration** - Latest AI model for email copywriting
-- **Product-Aware Generation** - Extracts product details intelligently
-- **Style Customization** - Multiple email template styles available
-- **Subject Line Optimization** - AI-generated engaging subject lines
+### **✅ Professional Approval Workflow**
+- **Full Campaign Preview** - Owner sees exact email customers will receive
+- **Visual Approval System** - Blue header with clear instructions, green markers around preview
+- **Simple Reply-Based Approval** - Just reply "APPROVED" or "CANCEL" to the email
+- **Pre-Send Quality Control** - Prevents accidental sends, ensures campaign review
 
-### **✅ Professional Approval Process**
-- **Visual Email Preview** - See exactly how customers will receive it
-- **Smart Content Detection** - Automatically extracts prices, products, features
-- **Simple Approval Workflow** - Reply-based approval system
-- **Revision Support** - Request specific changes via email reply
-
-### **📈 Campaign Management**
-- **Automated Customer Targeting** - Uses existing orders database
-- **Delivery Tracking** - Success/failure reporting per campaign
+### **📈 Robust Campaign Delivery**
+- **Automatic Customer Targeting** - Extracts all customer emails from orders sheet
+- **Dual Delivery System** - Gmail API primary + SMTP automatic fallback
+- **Delivery Statistics** - Real-time success/failure tracking per campaign
 - **Test Mode** - Send to yourself first before mass delivery
-- **Dual Delivery Systems** - Gmail API + SMTP fallback reliability
+- **Rate Limiting** - Prevents email service throttling (0.1s delays)
+- **Error Recovery** - Automatic SMTP fallback if Gmail API fails per email
+
+### **🛡️ Auto-Fix Technology**
+- **HTML Escaping Detection** - Automatically detects JSON escaping issues
+- **Intelligent Correction** - Converts escaped characters (`\\n`, `\\t`, `\\"`) to real ones
+- **Debug Logging** - Detailed logs show before/after fix samples
+- **Seamless Experience** - Works correctly even with improperly formatted input
 
 ## 🚀 **Email Marketing Use Cases**
 
@@ -529,13 +583,15 @@ Your **orders sheet** must include customer email addresses in any of these colu
 
 ## 💡 **Email Marketing Benefits**
 
-- **🎯 Targeted Campaigns** - Uses real customer data from orders
-- **⚡ Rapid Deployment** - Generate, approve, and send in minutes
-- **📱 Mobile-First Design** - Professional rendering on all devices
-- **🤖 AI Content Creation** - No copywriting skills required
-- **✅ Quality Control** - Built-in approval process prevents mistakes
-- **📊 Performance Tracking** - Delivery reports and campaign metrics
-- **💰 Cost-Effective** - Complete email marketing solution in one tool
+- **🎯 Targeted Campaigns** - Uses real customer data from orders sheet
+- **⚡ Rapid Deployment** - Create, approve, and send campaigns in under 5 minutes
+- **📱 Mobile-First Design** - Beautiful rendering on all devices and email clients
+- **🎨 Professional Aesthetic** - Modern dark theme with elegant pink accents
+- **✅ Quality Control** - Built-in approval process prevents accidental sends
+- **📊 Performance Tracking** - Delivery statistics and campaign IDs for each send
+- **💰 Cost-Effective** - Complete email marketing solution with no monthly fees
+- **🛡️ Bulletproof Delivery** - Dual delivery methods ensure maximum deliverability
+- **🔧 Auto-Fixing** - Handles common issues automatically without manual intervention
 
 ### **Complete Business Automation Stack**
 ```

@@ -2319,7 +2319,7 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
 # @mcp.tool()
 # def google_sheets_query_tool():
 #     # we already have this made above for order management.
-#     # we'll that same tool for marketing as well to get the inventory/product data for correct product name to pass in search_product_tool()
+#     # we'll use that same tool for marketing as well to get the inventory/product data for correct product name to pass in search_product_tool()
 
 @mcp.tool()
 def search_product_tool(product_name: str) -> str:
@@ -2890,6 +2890,11 @@ def upload_poster_to_imagekit_tool(
 # EMAIL MARKETING TOOLS
 # ========================================
 
+# @mcp.tool()
+# def google_sheets_query_tool():
+#     # we already have this made above for order management.
+#     # we'll use that same tool for email marketing as well to get the inventory/product data for correct product name, product price and image url to pass in email_content_tool()
+
 @mcp.tool()
 def email_content_tool(product_name: str, product_price: str, image_url: str, shop_link: str = "https://your-shop-link.com", company_name: str = "Skincare Business") -> str:
     """
@@ -2904,7 +2909,17 @@ def email_content_tool(product_name: str, product_price: str, image_url: str, sh
         company_name (str): The name of the company for the footer. Defaults to "Skincare Business".
 
     Returns:
-        str: JSON with email_content (HTML), email_subject, and success status.
+        str: JSON response with email_content and email_subject.
+        
+        IMPORTANT FOR AI AGENTS: The response is a JSON string. To use the email_content 
+        with get_email_design_approval_tool(), you MUST parse this JSON response first:
+        
+        1. Parse the JSON: result = json.loads(response)
+        2. Extract HTML: html = result["email_content"]
+        3. Pass to next tool: get_email_design_approval_tool(email_content=html, ...)
+        
+        DO NOT copy-paste the raw response text! The HTML contains actual newlines that 
+        appear as \\n in the JSON string. You must parse the JSON to get the real HTML.
     """
     logger.info(f"Email Marketing: Generating email for {product_name}")
     
@@ -2993,14 +3008,18 @@ def email_content_tool(product_name: str, product_price: str, image_url: str, sh
         
         logger.info(f"Email Marketing: Email content generated for {product_name}")
         
-        return json.dumps({
+        # Create response with clear instructions for AI agents
+        response = {
             "success": True,
             "email_content": final_html,
             "email_subject": subject_line,
             "product_featured": product_name,
             "ready_for_approval": True,
-            "message": f"Email content created successfully for {product_name}"
-        })
+            "message": f"Email content created successfully for {product_name}",
+            "next_step_instructions": "To send approval email, call get_email_design_approval_tool() with the email_content and email_subject from this response. IMPORTANT: Parse this JSON first to extract the actual HTML content - do not pass the raw JSON string!"
+        }
+        
+        return json.dumps(response)
         
     except Exception as e:
         logger.error(f"Email Marketing: Email generation failed: {e}")
@@ -3011,7 +3030,7 @@ def email_content_tool(product_name: str, product_price: str, image_url: str, sh
         })
 
 @mcp.tool()
-def get_email_design_approval_tool(email_content: str, subject_line: str, owner_email: str = "shamoonahmed.ai@gmail.com", approval_message: str = "") -> str:
+def get_email_design_approval_tool(email_content: str, subject_line: str, owner_email: str, approval_message: str = "") -> str:
     """
     Send email preview to business owner for approval.
     Sends the actual campaign email directly (no wrapper to avoid HTML escaping issues).
@@ -3029,13 +3048,30 @@ def get_email_design_approval_tool(email_content: str, subject_line: str, owner_
     logger.info(f"Email Marketing: Received email_content length: {len(email_content)}")
     logger.info(f"Email Marketing: First 100 chars: {email_content[:100]}")
     logger.info(f"Email Marketing: Contains literal backslash-n: {'\\n' in email_content}")
+    logger.info(f"Email Marketing: Contains real newlines: {chr(10) in email_content[:100]}")
     
-    # FIX: If the email_content contains LITERAL "\n" strings (not actual newlines),
-    # it means the client passed the raw JSON string instead of parsing it
-    # Let's try to fix it by replacing literal "\n" with actual newlines
-    if '\\n' in email_content and '\n' not in email_content[:100]:
-        logger.warning("Email Marketing: Received ESCAPED HTML! Fixing...")
-        email_content = email_content.replace('\\n', '\n').replace('\\t', '\t')
+    # AUTO-FIX: Detect and fix escaped HTML
+    # Check if we have literal "\n" text (which appears as backslash-n in the string)
+    # This happens when the MCP client passes double-escaped JSON
+    if '\\n' in email_content:
+        # Count how many literal \n vs real newlines in first 200 chars
+        sample = email_content[:200]
+        has_escaped = sample.count('\\n') > 0
+        has_real_newlines = sample.count('\n') > 0
+        
+        # If we have more escaped than real newlines, it's escaped HTML
+        if has_escaped and not has_real_newlines:
+            logger.warning("⚠️ Email Marketing: Received ESCAPED HTML! Auto-fixing...")
+            logger.info(f"Before fix sample: {repr(email_content[:80])}")
+            
+            # Replace escaped characters with real ones
+            email_content = email_content.replace('\\n', '\n')
+            email_content = email_content.replace('\\t', '\t')
+            email_content = email_content.replace('\\"', '"')
+            email_content = email_content.replace("\\'", "'")
+            
+            logger.info(f"After fix sample: {repr(email_content[:80])}")
+            logger.info("✅ HTML auto-fixed successfully!")
     
     try:
         # Load environment variables
@@ -3136,14 +3172,6 @@ def get_email_design_approval_tool(email_content: str, subject_line: str, owner_
         # Join all parts into final HTML (no f-string, no variable interpolation that could escape HTML)
         final_approval_html = ''.join(approval_html_parts)
         
-        # DEBUG: Save the HTML to a file so you can inspect it
-        try:
-            with open('last_approval_email.html', 'w', encoding='utf-8') as f:
-                f.write(final_approval_html)
-            logger.info("Email Marketing: Saved approval HTML to last_approval_email.html for debugging")
-        except Exception as debug_error:
-            logger.warning(f"Could not save debug HTML: {debug_error}")
-        
         # Try Gmail API first, fallback to SMTP
         try:
             gmail_service = build_gmail_service_from_refresh(refresh_token)
@@ -3217,6 +3245,20 @@ def send_emails_tool(approved_email_content: str, subject_line: str, sender_emai
     - test_mode: If true, send only to sender email for testing
     """
     logger.info(f"Email Marketing: Starting email campaign '{campaign_name}'")
+    
+    # AUTO-FIX: Detect and fix escaped HTML (same logic as approval tool)
+    if '\\n' in approved_email_content:
+        sample = approved_email_content[:200]
+        has_escaped = sample.count('\\n') > 0
+        has_real_newlines = sample.count('\n') > 0
+        
+        if has_escaped and not has_real_newlines:
+            logger.warning("⚠️ Email Marketing: Received ESCAPED HTML in send_emails_tool! Auto-fixing...")
+            approved_email_content = approved_email_content.replace('\\n', '\n')
+            approved_email_content = approved_email_content.replace('\\t', '\t')
+            approved_email_content = approved_email_content.replace('\\"', '"')
+            approved_email_content = approved_email_content.replace("\\'", "'")
+            logger.info("✅ HTML auto-fixed successfully!")
     
     try:
         # Load connection data
