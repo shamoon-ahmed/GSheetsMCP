@@ -1,0 +1,344 @@
+{
+  "sales_analytics_tools": [
+    {
+      "name": "search_invoices",
+      "title": "Search Invoices",
+      "description": "Search and filter invoices in QuickBooks Online using various criteria like customer, date, amount, status, and more. Supports advanced filtering with operators and pagination.\n\n**Why use this tool:**\n- Find invoices by customer name or ID\n- Search for unpaid or overdue invoices\n- Filter invoices by date range or amount\n- Get list of recent invoices for reporting\n- Find invoices with specific characteristics (e.g., high value, specific status)\n- Track accounts receivable and payment status\n\n**When to use:**\n- Need to find customer invoices before processing payments\n- Generating accounts receivable reports\n- Searching for overdue invoices requiring follow-up\n- Building invoice lists for customer portals\n- Finding invoices by date or amount ranges\n- Tracking invoice payment status\n\n\n**IMPORTANT - Three Input Formats:**\n\nFormat 1 - Pagination only: { \"limit\": 10, \"desc\": \"MetaData.CreateTime\" }\nFormat 2 - Array with operators: [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }, { \"field\": \"limit\", \"value\": 10 }]\nFormat 3 - Advanced with filters key: { \"filters\": [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }], \"limit\": 10 }\n\n**CRITICAL RULES:**\n1. For pagination ONLY, use Format 1 or Format 3 with empty filters\n2. For simple filters WITHOUT pagination, use: { \"FieldName\": \"value\" }\n3. NEVER mix filter fields with reserved keywords (limit, offset, asc, desc, count, fetchAll, filters) in simple object format\n4. When combining filters with pagination, use Format 2 (array) or Format 3 (filters key)\n5. For operators (>, <, >=, <=, LIKE, IN), use Format 2 or Format 3\n\n**Reserved Keywords:** limit, offset, asc, desc, count, fetchAll, filters\n\nSee SEARCH_TOOLS_USAGE_GUIDE.md for detailed examples.\n\n\n**Parameters:**\n- criteria (optional): Array of filter objects OR simple key-value object\n- limit (optional): Maximum number of results\n- offset (optional): Number of records to skip for pagination\n- asc/desc (optional): Field name to sort by\n\n**Supported fields:**\n- CustomerRef, TxnDate, DueDate, DocNumber\n- TotalAmt, Balance, BillEmail\n- EmailStatus, PrintStatus\n- MetaData.CreateTime, MetaData.LastUpdatedTime\n\n**Operators:**\n- = (equals), < (less than), > (greater than)\n- <= (less than or equal), >= (greater than or equal)\n- LIKE (partial match), IN (list of values)\n\n**Example usage:**\n1. Get all invoices (limit 20):\n   { \"criteria\": {}, \"limit\": 20 }\n\n2. Find unpaid invoices (Balance > 0):\n   {\n     \"criteria\": [\n       { \"field\": \"Balance\", \"value\": \"0\", \"operator\": \">\" }\n     ],\n     \"desc\": \"Balance\"\n   }\n\n3. Search by customer:\n   {\n     \"criteria\": [\n       { \"field\": \"CustomerRef\", \"value\": \"58\" }\n     ]\n   }\n\n4. Find invoices by date range:\n   {\n     \"criteria\": [\n       { \"field\": \"TxnDate\", \"value\": \"2024-01-01\", \"operator\": \">=\" },\n       { \"field\": \"TxnDate\", \"value\": \"2024-12-31\", \"operator\": \"<=\" }\n     ]\n   }\n\n5. Find large invoices:\n   {\n     \"criteria\": [\n       { \"field\": \"TotalAmt\", \"value\": \"1000\", \"operator\": \">\" }\n     ]\n   }\n\n**Returns:**\n- Array of invoice objects matching the criteria",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "criteria": {
+            "description": "Search criteria for invoices - can be simple object, array, or advanced criteria with filters, sorting, and pagination"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the search was successful"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of invoices found"
+          },
+          "invoices": {
+            "type": "array",
+            "description": "Array of invoice objects"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if search failed"
+          }
+        },
+        "required": [
+          "success",
+          "count"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "search_customers",
+      "title": "Search Customers",
+      "description": "Search and filter customers in QuickBooks Online using various criteria like name, email, company, balance, and more. Supports advanced filtering with operators and pagination.\n\n⚠️ **IMPORTANT**: This searches CUSTOMERS (buyers/clients), NOT accounts/vendors/employees!\n- To search accounts: use search_accounts\n- To search vendors: use search_vendors\n- To search employees: use search_employees\n\n**Why use this tool:**\n- Find customers by name, email, or company before creating transactions\n- Get list of customers for dropdown menus or selection lists\n- Find customers with outstanding balances\n- Search for customers by partial name matches\n- Filter customers by active/inactive status\n- Generate customer reports and analytics\n\n**When to use:**\n- Need to find a customer by name before creating an invoice\n- Building a customer selection interface\n- Searching for customers by email or phone\n- Getting list of active customers for reporting\n- Finding customers with specific characteristics (e.g., high balance)\n- Verifying if a customer exists before creating a new one\n\n\n**IMPORTANT - Three Input Formats:**\n\nFormat 1 - Pagination only: { \"limit\": 10, \"desc\": \"MetaData.CreateTime\" }\nFormat 2 - Array with operators: [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }, { \"field\": \"limit\", \"value\": 10 }]\nFormat 3 - Advanced with filters key: { \"filters\": [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }], \"limit\": 10 }\n\n**CRITICAL RULES:**\n1. For pagination ONLY, use Format 1 or Format 3 with empty filters\n2. For simple filters WITHOUT pagination, use: { \"FieldName\": \"value\" }\n3. NEVER mix filter fields with reserved keywords (limit, offset, asc, desc, count, fetchAll, filters) in simple object format\n4. When combining filters with pagination, use Format 2 (array) or Format 3 (filters key)\n5. For operators (>, <, >=, <=, LIKE, IN), use Format 2 or Format 3\n\n**Reserved Keywords:** limit, offset, asc, desc, count, fetchAll, filters\n\nSee SEARCH_TOOLS_USAGE_GUIDE.md for detailed examples.\n\n\n**Parameters:**\n- criteria (optional): Array of filter objects OR simple key-value object\n  - Simple format: { \"Active\": true, \"limit\": 10 }\n  - Advanced format with operators: [{ \"field\": \"DisplayName\", \"value\": \"John\", \"operator\": \"LIKE\" }]\n- limit (optional): Maximum number of results (default: unlimited)\n- offset (optional): Number of records to skip for pagination\n- asc (optional): Field name to sort ascending\n- desc (optional): Field name to sort descending\n\n**Supported fields:**\n- Id, DisplayName, GivenName, FamilyName, CompanyName\n- PrimaryEmailAddr, PrimaryPhone\n- Balance, Active\n- MetaData.CreateTime, MetaData.LastUpdatedTime\n\n**Operators:**\n- = (equals), < (less than), > (greater than)\n- <= (less than or equal), >= (greater than or equal)\n- LIKE (partial match), IN (list of values)\n\n**Example usage:**\n1. Get all active customers (limit 10):\n   {\n     \"criteria\": { \"Active\": true, \"limit\": 10 }\n   }\n\n2. Search by name (partial match):\n   {\n     \"criteria\": [\n       { \"field\": \"DisplayName\", \"value\": \"John\", \"operator\": \"LIKE\" }\n     ],\n     \"limit\": 20\n   }\n\n3. Find customers with balance > 0:\n   {\n     \"criteria\": [\n       { \"field\": \"Balance\", \"value\": \"0\", \"operator\": \">\" }\n     ]\n   }\n\n4. Search by email:\n   {\n     \"criteria\": [\n       { \"field\": \"PrimaryEmailAddr\", \"value\": \"john@example.com\" }\n     ]\n   }\n\n5. Get customers sorted by name:\n   {\n     \"criteria\": { \"Active\": true },\n     \"asc\": \"DisplayName\",\n     \"limit\": 50\n   }\n\n6. Complex search - active customers with balance > 100:\n   {\n     \"criteria\": [\n       { \"field\": \"Active\", \"value\": true },\n       { \"field\": \"Balance\", \"value\": \"100\", \"operator\": \">\" }\n     ],\n     \"desc\": \"Balance\"\n   }\n\n**Returns:**\n- Array of customer objects matching the criteria",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "criteria": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "Id",
+                        "DisplayName",
+                        "GivenName",
+                        "FamilyName",
+                        "CompanyName",
+                        "PrimaryEmailAddr",
+                        "PrimaryPhone",
+                        "Balance",
+                        "Active",
+                        "MetaData.CreateTime",
+                        "MetaData.LastUpdatedTime"
+                      ],
+                      "description": "Field to filter on – must be a property of the QuickBooks Online Customer entity."
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "boolean"
+                      ]
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "=",
+                        "<",
+                        ">",
+                        "<=",
+                        ">=",
+                        "LIKE",
+                        "IN"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Simple key (legacy) – any Customer property name."
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "description": "Filters to apply. Use the advanced form {field,value,operator?} for operators or the simple {key,value} pairs."
+          },
+          "limit": {
+            "type": "number"
+          },
+          "offset": {
+            "type": "number"
+          },
+          "asc": {
+            "type": "string"
+          },
+          "desc": {
+            "type": "string"
+          },
+          "fetchAll": {
+            "type": "boolean"
+          },
+          "count": {
+            "type": "boolean"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the operation was successful"
+          },
+          "data": {
+            "description": "The result data"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if operation failed"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "search_estimates",
+      "title": "Search Estimates",
+      "description": "Search and filter sales estimates in QuickBooks Online using various criteria like customer, date, amount, status, and more. Supports pagination and sorting.\n\n**Why use this tool:**\n- Find estimates by customer\n- List pending estimates awaiting approval\n- Search for accepted estimates to convert to invoices\n- Filter estimates by date range\n- Get estimates expiring soon\n- Build estimate reports and pipelines\n\n**When to use:**\n- Finding customer quotes for follow-up\n- Listing pending estimates for review\n- Searching for accepted estimates to invoice\n- Generating estimate reports\n- Finding expired quotes\n- Building estimate dashboards\n\n\n**IMPORTANT - Three Input Formats:**\n\nFormat 1 - Pagination only: { \"limit\": 10, \"desc\": \"MetaData.CreateTime\" }\nFormat 2 - Array with operators: [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }, { \"field\": \"limit\", \"value\": 10 }]\nFormat 3 - Advanced with filters key: { \"filters\": [{ \"field\": \"FieldName\", \"value\": \"value\", \"operator\": \">\" }], \"limit\": 10 }\n\n**CRITICAL RULES:**\n1. For pagination ONLY, use Format 1 or Format 3 with empty filters\n2. For simple filters WITHOUT pagination, use: { \"FieldName\": \"value\" }\n3. NEVER mix filter fields with reserved keywords (limit, offset, asc, desc, count, fetchAll, filters) in simple object format\n4. When combining filters with pagination, use Format 2 (array) or Format 3 (filters key)\n5. For operators (>, <, >=, <=, LIKE, IN), use Format 2 or Format 3\n\n**Reserved Keywords:** limit, offset, asc, desc, count, fetchAll, filters\n\nSee SEARCH_TOOLS_USAGE_GUIDE.md for detailed examples.\n\n\n**Parameters:**\n- criteria (optional): Array of filter objects OR simple key-value object\n- limit (optional): Maximum number of results\n- offset (optional): Number of records to skip for pagination\n- asc/desc (optional): Field name to sort by\n\n**Supported fields:**\n- CustomerRef: Customer ID\n- TxnDate: Transaction date\n- ExpirationDate: Quote expiration\n- DocNumber: Estimate number\n- TotalAmt: Total estimate amount\n- TxnStatus: Accepted, Pending, Rejected, Closed\n- EmailStatus: Email delivery status\n- MetaData.CreateTime, MetaData.LastUpdatedTime\n\n**Operators:**\n- = (equals), < (less than), > (greater than)\n- <= (less than or equal), >= (greater than or equal)\n- LIKE (partial match), IN (list of values)\n\n**Example usage:**\n1. Get pending estimates:\n   {\n     \"criteria\": [\n       { \"field\": \"TxnStatus\", \"value\": \"Pending\" }\n     ],\n     \"desc\": \"TxnDate\"\n   }\n\n2. Find estimates by customer:\n   {\n     \"criteria\": [\n       { \"field\": \"CustomerRef\", \"value\": \"1\" }\n     ],\n     \"desc\": \"TxnDate\"\n   }\n\n3. Find accepted estimates:\n   {\n     \"criteria\": [\n       { \"field\": \"TxnStatus\", \"value\": \"Accepted\" }\n     ],\n     \"asc\": \"TxnDate\"\n   }\n\n4. Find estimates by date range:\n   {\n     \"criteria\": [\n       { \"field\": \"TxnDate\", \"value\": \"2024-01-01\", \"operator\": \">=\" },\n       { \"field\": \"TxnDate\", \"value\": \"2024-12-31\", \"operator\": \"<=\" }\n     ]\n   }\n\n5. Find expiring estimates:\n   {\n     \"criteria\": [\n       { \"field\": \"ExpirationDate\", \"value\": \"2024-02-01\", \"operator\": \"<=\" },\n       { \"field\": \"TxnStatus\", \"value\": \"Pending\" }\n     ]\n   }\n\n6. Find estimates by amount range:\n   {\n     \"criteria\": [\n       { \"field\": \"TotalAmt\", \"value\": \"1000\", \"operator\": \">=\" }\n     ],\n     \"desc\": \"TotalAmt\"\n   }\n\n**Returns:**\n- Array of Estimate objects matching criteria\n- Each estimate includes customer, amounts, status, dates\n- Line item details and totals",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "criteria": {
+            "type": "array",
+            "items": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "field": {
+                      "type": "string",
+                      "enum": [
+                        "Id",
+                        "DocNumber",
+                        "TxnDate",
+                        "TxnStatus",
+                        "CustomerRef",
+                        "TotalAmt",
+                        "MetaData.CreateTime",
+                        "MetaData.LastUpdatedTime"
+                      ],
+                      "description": "Field to filter on – must be a property of the QuickBooks Online Estimate entity."
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "boolean"
+                      ]
+                    },
+                    "operator": {
+                      "type": "string",
+                      "enum": [
+                        "=",
+                        "<",
+                        ">",
+                        "<=",
+                        ">=",
+                        "LIKE",
+                        "IN"
+                      ],
+                      "description": "Comparison operator. Defaults to '=' if omitted."
+                    }
+                  },
+                  "required": [
+                    "field",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "key": {
+                      "type": "string",
+                      "description": "Simple key (legacy) – any Estimate property name."
+                    },
+                    "value": {
+                      "type": [
+                        "string",
+                        "boolean"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "key",
+                    "value"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "description": "Filters to apply. Use the advanced form {field,value,operator?} for operators or the simple {key,value} pairs."
+          },
+          "limit": {
+            "type": "number",
+            "description": "Maximum number of results to return"
+          },
+          "offset": {
+            "type": "number",
+            "description": "Number of results to skip"
+          },
+          "asc": {
+            "type": "string",
+            "description": "Field to sort ascending by"
+          },
+          "desc": {
+            "type": "string",
+            "description": "Field to sort descending by"
+          },
+          "fetchAll": {
+            "type": "boolean",
+            "description": "Fetch all matching results"
+          },
+          "count": {
+            "type": "boolean",
+            "description": "Return only the count of results"
+          }
+        },
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the search was successful"
+          },
+          "count": {
+            "type": "number",
+            "description": "Number of estimates found or count result"
+          },
+          "estimates": {
+            "type": "array",
+            "description": "Array of estimate objects"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if search failed"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    },
+    {
+      "name": "read_invoice",
+      "title": "Read Invoice",
+      "description": "Retrieve complete details of a specific invoice from QuickBooks Online including line items, customer information, amounts, and payment status.\n\n**Why use this tool:**\n- Get full invoice details including all line items\n- Check invoice payment status and balance due\n- Retrieve invoice for customer review or resending\n- Get current sync token before updating invoice\n- Access invoice PDF link or email status\n- Review invoice line items and tax calculations\n\n**When to use:**\n- Displaying invoice details to customers\n- Before applying payments to an invoice\n- When updating or modifying an existing invoice (need SyncToken)\n- Generating invoice reports or statements\n- Verifying invoice amounts and line items\n- Checking if invoice has been emailed or printed\n\n**Parameters:**\n- id (required): The unique QuickBooks ID of the invoice (e.g., \"130\", \"1052\")\n\n**Example usage:**\n1. Read invoice by ID:\n   { \"id\": \"130\" }\n\n2. Get invoice before applying payment:\n   { \"id\": \"1052\" }\n\n3. Retrieve invoice for customer statement:\n   { \"id\": \"845\" }\n\n**Returns:**\n- Complete invoice object including:\n  - Id, DocNumber, TxnDate, DueDate\n  - CustomerRef (customer details)\n  - Line items (products/services sold)\n  - TotalAmt (total invoice amount)\n  - Balance (amount still owed)\n  - EmailStatus, PrintStatus\n  - SyncToken (for updates)\n  - LinkedTxn (payments applied)",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "invoice_id": {
+            "type": "string",
+            "minLength": 1,
+            "description": "The ID of the invoice to read"
+          }
+        },
+        "required": [
+          "invoice_id"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "success": {
+            "type": "boolean",
+            "description": "Whether the invoice was retrieved successfully"
+          },
+          "invoice": {
+            "description": "The invoice object"
+          },
+          "error": {
+            "type": "string",
+            "description": "Error message if retrieval failed"
+          }
+        },
+        "required": [
+          "success"
+        ],
+        "additionalProperties": false,
+        "$schema": "http://json-schema.org/draft-07/schema#"
+      }
+    }
+  ]
+}
