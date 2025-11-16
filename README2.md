@@ -190,7 +190,7 @@ The flow is:
 The agent will first use the `google_sheets_query_tool` to get all the products data in the inventory.
 - Agent sees the correct name is "Lavender Body Lotion" and passes it into `search_product_tool` to get all the details of that specific product.
 - Then it uses `prompt_structure_tool` and passes the product details it got from the output of `search_product_tool` and it passes the main query from the user as the user prompt.
-- Now that the agent has the prompt to generate images, it passes that prompt into `generate_images_tool` and generates the promotional poster for Lavender Body Lotion and also a social media caption.
+ - Now that the agent has the prompt to generate images, it passes that prompt into `generate_and_upload_poster_tool` which generates the promotional poster, uploads it to ImageKit CDN, saves metadata to the Neon Postgres `poster_generations` table, and returns the CDN URL along with an AI-generated social media caption.
 
 ### **🔍 Product Search Tool**
 
@@ -219,21 +219,22 @@ The agent will first use the `google_sheets_query_tool` to get all the products 
 
 ### **🖼️ AI Image Generation Tool**
 
-10. **`generate_images_tool`**
-    - **Purpose:** Generate marketing posters using Google Gemini 2.5 Flash Image API
-    - **Input:** Marketing prompt + optional product image URL
-    - **Output:** Base64 encoded poster images or file paths
-    - **Features:**
-      - Works with prompt-only or prompt + existing product images
-      - Supports product images from Google Sheets Media column
-      - Multiple output formats (base64, file)
-      - Real-time API integration with Gemini AI
-    - **Requirements:** Paid Gemini API tier for image generation
-    - **Example Usage:**
-      ```json
-      generate_images_tool(marketing_prompt, product_image_url, "base64")
-      → Returns: Generated poster as base64 image data and a social media caption
-      ```
+10. **`generate_and_upload_poster_tool`**
+      - **Purpose:** End-to-end poster generation and delivery using Google Gemini and ImageKit
+      - **Input:** Marketing prompt + optional product image URL + optional `tenant_id`
+      - **Output:** ImageKit CDN URL, ImageKit file id, AI-generated caption, and `tenant_id`
+      - **Features:**
+         - Generates a high-quality poster using Gemini image generation
+         - Converts the generated image to a base64 string in memory (no local file I/O)
+         - Uploads the poster directly to ImageKit CDN (organized under `/posters/{tenant_id}/`)
+         - Persists metadata to a Neon Postgres table `poster_generations` (tenant_id, image_url, image_caption)
+         - Returns a ready-to-use CDN URL and an AI-generated social caption
+      - **Notes:** The tool no longer accepts an external caption parameter — captions are produced by Gemini and stored automatically.
+      - **Example Usage:**
+         ```json
+         generate_and_upload_poster_tool(marketing_prompt, product_image_url)
+         → Returns: {imagekit_url, imagekit_file_id, caption, tenant_id}
+         ```
 
 ## 🎯 **Marketing Workflow**
 
@@ -243,14 +244,14 @@ The agent will first use the `google_sheets_query_tool` to get all the products 
    - Retrieves product details from inventory
    - Includes price, features, media URLs, marketing tags
 
-2. **📝 Prompt Creation** → `prompt_structure_tool(product_data, "professional")`
+2. **📝 Prompt Creation** → `prompt_structure_tool(product_details, user_prompt)`
    - Converts product data into optimized marketing prompt
    - Applies style-specific design requirements
 
-3. **🖼️ Image Generation** → `generate_images_tool(prompt, media_url)`
+3. **🖼️ Image Generation** → `generate_and_upload_poster_tool(prompt, media_url)`
    - Generates professional poster using Gemini AI
-   - Combines product data with AI-powered design
-   - Generates a social media caption as well
+   - Converts and uploads poster to ImageKit CDN and returns CDN URL
+   - Persists metadata (tenant_id, image_url, caption) to Neon Postgres
 
 ### **End-to-End Example:**
 ```
@@ -259,11 +260,11 @@ Input: "Create a professional poster for Coconut Lip Balm"
 1. Search: search_product_tool("Coconut Lip Balm")
    → {name: "Coconut Lip Balm", price: "400 PKR", tags: "moisturizing, coconut, daily-use"}
 
-2. Prompt: prompt_structure_tool(product_data, "professional") 
+2. Prompt: prompt_structure_tool(product_details, user_prompt) 
    → "Create a clean, professional marketing poster for 'Coconut Lip Balm' priced at 400..."
 
-3. Generate: generate_images_tool(marketing_prompt, product_image_url)
-   → Base64 encoded professional poster image with caption
+3. Generate: generate_and_upload_poster_tool(prompt, product_image_url)
+   → Poster uploaded to ImageKit CDN, returns CDN URL and AI caption
 ```
 
 ## ⚙️ **Marketing Setup Requirements**
@@ -278,6 +279,13 @@ GEMINI_MODEL_NAME=gemini-2.5-flash-image-preview
 INVENTORY_SHEET_ID=your_sheet_id
 INVENTORY_WORKSHEET_NAME=your_sheet_name
 GOOGLE_REFRESH_TOKEN=your_refresh_token
+
+# Database - Neon PostgreSQL
+DATABASE_URL=your_postgres_database_url
+
+# ImageKit Configuration
+IMAGEKIT_PUBLIC_KEY=your_imagekit_public_key
+IMAGEKIT_PRIVATE_KEY=your_imagekit_private_key
 ```
 
 ### **Google Sheets Schema for Marketing:**
