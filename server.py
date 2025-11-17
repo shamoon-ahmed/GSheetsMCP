@@ -2788,17 +2788,17 @@ Example of what to provide:
 #     # we'll use that same tool for email marketing as well to get the inventory/product data for correct product name, product price and image url to pass in email_content_tool()
 
 @mcp.tool()
-def email_content_tool(product_name: str, product_price: str, image_url: str, shop_link: str = "https://your-shop-link.com", company_name: str = "Skincare Business") -> str:
+def email_content_tool(product_name: str, product_price: str, image_url: str, shop_link: str = "https://your-shop-link.com", company_name: str = "Sahulat AI") -> str:
     """
     Generates a dark-style, dynamic HTML email campaign for a single product.
     This is the main tool for creating email content to send for approval and to customers.
 
     Args:
-        product_name (str): The name of the product (e.g., "Night Repair Serum").
-        product_price (str): The price of the product (e.g., "Rs. 1500").
+        product_name (str): The name of the product/item (e.g., "Night Repair Serum" or can be "Spicy Buffalo Wings" or can be "White Leather Shoes", anything based on the product or item name).
+        product_price (str): The price of the product/item (e.g., "Rs. 1500").
         image_url (str): The publicly accessible URL of the product image.
         shop_link (str): The URL for the "Shop Now" button. Defaults to placeholder.
-        company_name (str): The name of the company for the footer. Defaults to "Skincare Business".
+        company_name (str): The name of the company for the footer. Defaults to "Sahulat AI".
 
     Returns:
         str: JSON response with email_content and email_subject.
@@ -2821,7 +2821,7 @@ def email_content_tool(product_name: str, product_price: str, image_url: str, sh
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Dynamic Skincare Campaign</title>
+    <title>Dynamic Business Campaign</title>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
 </head>
@@ -2842,27 +2842,27 @@ def email_content_tool(product_name: str, product_price: str, image_url: str, sh
                     <tr>
                         <td style="padding: 30px 40px; color: #ffffff; text-align: center;">
                             
-                            <h1 style="margin-top: 0; margin-bottom: 20px; font-size: 24px; color: #ffebf0;">
+                            <h1 style="margin-top: 0; margin-bottom: 20px; font-size: 24px; color: #ffffff;">
                                 Introducing the amazing PRODUCT_NAME_PLACEHOLDER!
                             </h1>
 
                             <p style="margin-bottom: 15px; font-size: 16px; line-height: 1.6;">
-                                Take care of your Skin because it's worth it! Our products help you get the perfect skin!
+                                The Decision You won't Ever Regret! 
                             </p>
                             
                             <p style="margin-bottom: 25px; font-size: 18px; line-height: 1.6;">
-                                Just for <span style="font-weight: bold; color: #ff99aa;">PRICE_PLACEHOLDER</span>
+                                Just for <span style="font-weight: bold; color: #ffdd99;">PRICE_PLACEHOLDER</span>
                             </p>
 
                             <p style="margin-bottom: 30px; font-size: 20px; font-style: italic; color: #cccccc;">
-                                Get Soft Skin in minutes with PRODUCT_NAME_PLACEHOLDER!
+                                Get PRODUCT_NAME_PLACEHOLDER with in a few clicks!
                             </p>
 
                             <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
                                 <tr>
-                                    <td align="center" style="border-radius: 5px; background-color: #ff99aa;">
-                                        <a href="SHOP_LINK_PLACEHOLDER" target="_blank" style="font-size: 16px; font-family: Arial, sans-serif; color: #1a1a1a; text-decoration: none; padding: 12px 25px; border: 1px solid #ff99aa; display: inline-block; border-radius: 5px; font-weight: bold;">
-                                            Shop Now
+                                    <td align="center" style="border-radius: 5px; background-color: #ffdd99;">
+                                        <a href="SHOP_LINK_PLACEHOLDER" target="_blank" style="font-size: 16px; font-family: Arial, sans-serif; color: #1a1a1a; text-decoration: none; padding: 12px 25px; border: 1px solid #ffdd99; display: inline-block; border-radius: 5px; font-weight: bold;">
+                                            Order Now
                                         </a>
                                     </td>
                                 </tr>

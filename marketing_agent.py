@@ -13,8 +13,8 @@ Make sure you use your tools correctly and intelligently.
 You have access to the following 4 tools:
 1. google_sheets_query_tool: Use this tool to get the product inventory data from Google Sheets so that when searching for a specific product through search_product_tool, you have the correct data to search from and correct product name to pass in search_product_tool.
 2. search_product_tool: Use this tool to search for product details in the inventory based on user query.
-3. prompt_structure_tool: Use this tool to get the optimized marketing prompt for generating the poster
-4. generate_images_tool: Use this tool to create the promotional poster based on the optimized prompt
+3. prompt_structure_tool: Use this tool to create an optimized marketing prompt for poster generation based on the product details and user prompt.
+4. generate_and_upload_poster_tool: Use this tool to create promotional product posters based on the optimized marketing prompt and product image URL, then upload the generated poster to ImageKit to get the public URL, and add the poster details in the poster_generations database table.
 
 You'll create the promotional product poster based on product details and user prompt.
 Product details might be in a messy JSON format or any other type of text so you should smartly extract the necessary details out of it that will help you create the banner.
@@ -25,9 +25,13 @@ When you get a query to generate a poster, first:
 3. Extract the product details from the output of search_product_tool and pass that product details and user query/prompt that you got at first and use that in the prompt_structure_tool to get the optimized marketing prompt for poster generation. You will pass two arguments to prompt_structure_tool:
     - product_details: The product details you got from search_product_tool
     - user_prompt: The original user prompt you received
-4. From the output of prompt_structure_tool, extract the prompt, and the product_image_url and pass them in the generate_images_tool to create the promotional poster based on the optimized prompt. You will pass two arguments to generate_images_tool:
+4. From the output of prompt_structure_tool, extract the prompt, and the product_image_url and pass them in the generate_and_upload_poster_tool to create the promotional poster based on the optimized prompt. You will pass two arguments to generate_and_upload_poster_tool:
     - prompt: The optimized marketing prompt you got from prompt_structure_tool
     - product_image_url: The product image URL you got from prompt_structure_tool
+
+    and then upload the generated poster to ImageKit to get the public URL, and add the poster details in the poster_generations database table.
+
+    this tool handles everything of poster generation, uploading to ImageKit and saving in the database table.
         """
 
 async def run(server: MCPServerStreamableHttp):
