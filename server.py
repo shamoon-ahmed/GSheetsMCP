@@ -2312,6 +2312,92 @@ def cancel_multiple_products_order_tool(order_id: str) -> str:
             "details": str(e)
         })
 
+@mcp.tool()
+def check_order_status(order_id: str) -> str:
+    """
+    Look up the given `order_id` in the orders sheet and return its current status.
+    Returns JSON string: {success, order_id, status} or an error payload.
+    """
+    logger.info(f"Order Tools: Checking status for order {order_id}")
+    try:
+        conn = load_env_connection()
+        if not conn:
+            return json.dumps({"success": False, "error": "no_connection_configured"})
+
+        orders_config = conn.get("orders")
+        refresh_token = conn.get("refresh_token")
+        if not all([orders_config, refresh_token]):
+            return json.dumps({"success": False, "error": "missing_configuration"})
+
+        service = build_sheets_service_from_refresh(refresh_token)
+        orders_data = get_sheet_data(
+            service,
+            orders_config["workbook_id"],
+            orders_config["worksheet_name"],
+            conn
+        )
+
+        for item in orders_data.get("data", []):
+            detected = smart_column_detection(item, "all")
+            if "id" in detected and str(detected["id"]["value"]) == str(order_id):
+                status = detected.get("status", {}).get("value", "").strip()
+                return json.dumps({"success": True, "order_id": order_id, "status": status or "unknown"})
+
+        return json.dumps({"success": False, "error": "order_not_found", "order_id": order_id})
+    except Exception as e:
+        logger.error(f"check_order_status failed: {e}")
+        return json.dumps({"success": False, "error": "lookup_failed", "details": str(e)})
+
+
+@mcp.tool()
+def send_payment_link(order_id: str) -> str:
+    """
+    Prepare (and return) a dynamic payment link for the given `order_id`.
+    The link format used: https://easy-rokra.netlify.app/payment?orderid={order_id}
+
+    The tool will also attempt to look up the customer's email for the order
+    and return it alongside the payment link (but does not send an email).
+    Returns JSON string with {success, order_id, payment_link, customer_email?}
+    """
+    logger.info(f"Order Tools: Preparing payment link for order {order_id}")
+    try:
+        conn = load_env_connection()
+        if not conn:
+            return json.dumps({"success": False, "error": "no_connection_configured"})
+
+        orders_config = conn.get("orders")
+        refresh_token = conn.get("refresh_token")
+        if not all([orders_config, refresh_token]):
+            return json.dumps({"success": False, "error": "missing_configuration"})
+
+        service = build_sheets_service_from_refresh(refresh_token)
+        orders_data = get_sheet_data(
+            service,
+            orders_config["workbook_id"],
+            orders_config["worksheet_name"],
+            conn
+        )
+
+        # Verify the order exists in the orders sheet before returning a payment link
+        order_found = False
+        for item in orders_data.get("data", []):
+            detected = smart_column_detection(item, "all")
+            if "id" in detected and str(detected["id"]["value"]) == str(order_id):
+                order_found = True
+                break
+
+        if not order_found:
+            return json.dumps({"success": False, "error": "order_not_found", "order_id": order_id})
+
+        payment_link = f"https://easy-rokra.netlify.app/payment?orderid={order_id}"
+        response = {"success": True, "order_id": order_id, "payment_link": payment_link}
+        return json.dumps(response)
+    
+    except Exception as e:
+        logger.error(f"send_payment_link failed: {e}")
+        return json.dumps({"success": False, "error": "prepare_failed", "details": str(e)})
+
+
 # ========================================
 # MARKETING TOOLS FOR POSTER GENERATION
 # ========================================
